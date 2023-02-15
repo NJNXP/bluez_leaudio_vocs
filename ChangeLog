@@ -4,7 +4,7 @@ ver 5.66:
 	Fix issue with not setting initiator flag correctly.
 	Fix issue with HoG Report MAP size handling.
 	Add initial support for Basic Audio Profile.
-	Add initial support for Volume Control Profile.
+	Add initial support for Volume Control Profile
 
 ver 5.65:
 	Fix issue with A2DP cache invalidation handling.
