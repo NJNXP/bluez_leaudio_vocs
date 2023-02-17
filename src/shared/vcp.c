@@ -58,9 +58,19 @@ struct bt_vcs_param {
 	uint8_t	change_counter;
 } __packed;
 
+struct bt_vocs_param {
+	uint8_t	op;
+	uint8_t	change_counter;
+} __packed;
+
 struct bt_vcs_ab_vol {
 	uint8_t	change_counter;
 	uint8_t	vol_set;
+} __packed;
+
+struct bt_vocs_set_vol_off {
+	uint8_t	change_counter;
+	uint8_t	set_vol_offset;
 } __packed;
 
 struct bt_vcp_cb {
@@ -248,6 +258,7 @@ static void vcp_db_free(void *data)
 	gatt_db_unref(vdb->db);
 
 	free(vdb->vcs);
+	free(vdb->vocs);
 	free(vdb);
 }
 
@@ -629,6 +640,45 @@ static uint8_t vcs_mute(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	return 0;
 }
 
+static uint8_t vocs_set_vol_offset(struct bt_vocs *vocs, struct bt_vcp *vcp,
+				struct iovec *iov)
+{
+	struct bt_vcp_db *vdb;
+	struct vol_offset_state *vstate;
+	struct bt_vocs_set_vol_off *req;
+
+	DBG(vcp, "Set Volume Offset");
+
+	vdb = vcp_get_vdb(vcp);
+	if (!vdb) {
+		DBG(vcp, "error: VDB not available");
+		return 0;
+	}
+
+	vstate = vdb_get_vostate(vdb);
+	if (!vstate) {
+		DBG(vcp, "error: VSTATE not available");
+		return 0;
+	}
+
+	req = iov_pull_mem(iov, sizeof(*req));
+	if (!req)
+		return 0;
+
+	if (req->change_counter != vstate->counter) {
+		DBG(vcp, "Change Counter Mismatch Volume not decremented!");
+		return BT_ATT_ERROR_INVALID_CHANGE_COUNTER;
+	}
+
+	vstate->vol_offset = req->set_vol_offset;
+	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+
+	gatt_db_attribute_notify(vdb->vocs->vos, (void *)vstate,
+				 sizeof(struct vol_offset_state),
+				 bt_vcp_get_att(vcp));
+	return 0;
+}
+
 #define	BT_VCS_REL_VOL_DOWN		0x00
 #define	BT_VCS_REL_VOL_UP		0x01
 #define	BT_VCS_UNMUTE_REL_VOL_DOWN	0x02
@@ -636,6 +686,8 @@ static uint8_t vcs_mute(struct bt_vcs *vcs, struct bt_vcp *vcp,
 #define	BT_VCS_SET_ABSOLUTE_VOL		0x04
 #define	BT_VCS_UNMUTE			0x05
 #define	BT_VCS_MUTE			0x06
+
+#define BT_VOCS_SET_VOL_OFFSET	0x01
 
 #define VCS_OP(_str, _op, _size, _func) \
 	{ \
@@ -666,6 +718,26 @@ struct vcs_op_handler {
 		sizeof(uint8_t), vcs_unmute),
 	VCS_OP("Mute", BT_VCS_MUTE,
 		sizeof(uint8_t), vcs_mute),
+	{}
+};
+
+#define VOCS_OP(_str, _op, _size, _func) \
+	{ \
+		.str = _str, \
+		.op = _op, \
+		.size = _size, \
+		.func = _func, \
+	}
+
+struct vocs_op_handler {
+	const char *str;
+	uint8_t	op;
+	size_t	size;
+	uint8_t	(*func)(struct bt_vocs *vocs, struct bt_vcp *vcp,
+			struct iovec *iov);
+} vocp_handlers[] = {
+	VOCS_OP("Set Volume Offset", BT_VOCS_SET_VOL_OFFSET,
+		sizeof(uint8_t), vocs_set_vol_offset),
 	{}
 };
 
@@ -720,6 +792,66 @@ static void vcs_cp_write(struct gatt_db_attribute *attrib,
 		DBG(vcp, "%s", handler->str);
 
 		ret = handler->func(vcs, vcp, &iov);
+	} else {
+		DBG(vcp, "Unknown opcode 0x%02x", *vcp_op);
+		ret = BT_ATT_ERROR_OPCODE_NOT_SUPPORTED;
+	}
+
+respond:
+	gatt_db_attribute_write_result(attrib, id, ret);
+}
+
+static void vocs_cp_write(struct gatt_db_attribute *attrib,
+				unsigned int id, uint16_t offset,
+				const uint8_t *value, size_t len,
+				uint8_t opcode, struct bt_att *att,
+				void *user_data)
+{
+	struct bt_vocs *vocs = user_data;
+	struct bt_vcp *vcp = vcp_get_session(att, vocs->vdb->db);
+	struct iovec iov = {
+		.iov_base = (void *) value,
+		.iov_len = len,
+	};
+	uint8_t	*vcp_op;
+	struct vocs_op_handler *handler;
+	uint8_t ret = BT_ATT_ERROR_REQUEST_NOT_SUPPORTED;
+
+	DBG(vcp, "VOCP Control Point Write");
+
+	if (offset) {
+		DBG(vcp, "invalid offset %d", offset);
+		ret = BT_ATT_ERROR_INVALID_OFFSET;
+		goto respond;
+	}
+
+	if (len < sizeof(*vcp_op)) {
+		DBG(vcp, "invalid len %ld < %ld sizeof(*param)", len,
+							sizeof(*vcp_op));
+		ret = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+		goto respond;
+	}
+
+	vcp_op = iov_pull_mem(&iov, sizeof(*vcp_op));
+
+	for (handler = vocp_handlers; handler && handler->str; handler++) {
+		if (handler->op != *vcp_op)
+			continue;
+
+		if (iov.iov_len < handler->size) {
+			DBG(vcp, "invalid len %ld < %ld handler->size", len,
+			    handler->size);
+			ret = BT_ATT_ERROR_OPCODE_NOT_SUPPORTED;
+			goto respond;
+		}
+
+		break;
+	}
+
+	if (handler && handler->str) {
+		DBG(vcp, "%s", handler->str);
+
+		ret = handler->func(vocs, vcp, &iov);
 	} else {
 		DBG(vcp, "Unknown opcode 0x%02x", *vcp_op);
 		ret = BT_ATT_ERROR_OPCODE_NOT_SUPPORTED;
@@ -902,6 +1034,14 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 					BT_GATT_CHRC_PROP_NOTIFY,
 					vocs_voal_read, NULL,
 					vocs);
+	
+	bt_uuid16_create(&uuid, VOL_OFFSET_CP_CHRC_UUID);
+	vocs->vo_cp = gatt_db_service_add_characteristic(vocs->service,
+					&uuid,
+					BT_ATT_PERM_WRITE,
+					BT_GATT_CHRC_PROP_WRITE,
+					NULL, vocs_cp_write,
+					vocs);
 
 	vocs->voal_ccc = gatt_db_service_add_ccc(vocs->service,
 					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
@@ -917,30 +1057,7 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 
 	vocs->voaodec_ccc = gatt_db_service_add_ccc(vocs->service,
 					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
-#if 0
-	bt_uuid16_create(&uuid, VOL_CP_CHRC_UUID);
-	vcs->vol_cp = gatt_db_service_add_characteristic(vcs->service,
-					&uuid,
-					BT_ATT_PERM_WRITE,
-					BT_GATT_CHRC_PROP_WRITE,
-					NULL, vcs_cp_write,
-					vcs);
-					
-	bt_uuid16_create(&uuid, VOL_FLAG_CHRC_UUID);
-	vocs->vf = gatt_db_service_add_characteristic(vocs->service,
-					&uuid,
-					BT_ATT_PERM_READ,
-					BT_GATT_CHRC_PROP_READ |
-					BT_GATT_CHRC_PROP_NOTIFY,
-					vocs_flag_read, NULL,
-					vcs);
 
-	vcs->vf_ccc = gatt_db_service_add_ccc(vcs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
-
-
-	gatt_db_service_set_active(vcs->service, true);
-#endif
 	return vocs;
 }
 
