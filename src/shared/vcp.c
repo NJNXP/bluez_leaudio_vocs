@@ -131,6 +131,7 @@ struct bt_vcs {
 	struct gatt_db_attribute *vf_ccc;
 };
 
+#define USERSET_AUDIO_LOC 0x01
 /* Contains local bt_vcp_db */
 struct vol_offset_state {
     uint16_t vol_offset;
@@ -140,7 +141,8 @@ struct vol_offset_state {
 struct bt_vocs {
     struct bt_vcp_db *vdb;
     struct vol_offset_state *vostate;
-    uint8_t vol_flag;
+	uint32_t vocs_audio_loc;
+	char vocs_ao_dec;
     struct gatt_db_attribute *service;
     struct gatt_db_attribute *vos;
     struct gatt_db_attribute *vos_ccc;
@@ -914,8 +916,8 @@ static void vocs_voal_read(struct gatt_db_attribute *attrib,
 	struct bt_vocs *vocs = user_data;
 	struct iovec iov;
 
-	iov.iov_base = &vocs->voal;
-	iov.iov_len = sizeof(vocs->voal);
+	iov.iov_base = &vocs->vocs_audio_loc;
+	iov.iov_len = sizeof(vocs->vocs_audio_loc);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
 							iov.iov_len);
@@ -1008,7 +1010,7 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 	vostate = new0(struct vol_offset_state, 1);
 
 	vocs->vostate = vostate;
-	vocs->vol_flag = USERSET_VOLUME_SETTING;
+	vocs->vocs_audio_loc = USERSET_AUDIO_LOC;
 
 	/* Populate DB with VOCS attributes */
 	bt_uuid16_create(&uuid, VOL_OFFSET_CS_UUID);
