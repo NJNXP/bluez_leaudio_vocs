@@ -36,6 +36,36 @@
 #define BT_ATT_ERROR_INVALID_CHANGE_COUNTER	0x80
 #define BT_ATT_ERROR_OPCODE_NOT_SUPPORTED	0x81
 
+#define GEN_AUDIO_AUDLOC_NA                   0x00000000
+#define GEN_AUDIO_AUDLOC_FL                   0x00000001
+#define GEN_AUDIO_AUDLOC_FR                   0x00000002
+#define GEN_AUDIO_AUDLOC_FC                   0x00000004
+#define GEN_AUDIO_AUDLOC_LOW_FRQ_EFF_1        0x00000008
+#define GEN_AUDIO_AUDLOC_BL                   0x00000010
+#define GEN_AUDIO_AUDLOC_BR                   0x00000020
+#define GEN_AUDIO_AUDLOC_FLC                  0x00000040
+#define GEN_AUDIO_AUDLOC_FRC                  0x00000080
+#define GEN_AUDIO_AUDLOC_BC                   0x00000100
+#define GEN_AUDIO_AUDLOC_LOW_FRQ_EFF_2        0x00000200
+#define GEN_AUDIO_AUDLOC_SL                   0x00000400
+#define GEN_AUDIO_AUDLOC_SR                   0x00000800
+#define GEN_AUDIO_AUDLOC_TFL                  0x00001000
+#define GEN_AUDIO_AUDLOC_TFR                  0x00002000
+#define GEN_AUDIO_AUDLOC_TFC                  0x00004000
+#define GEN_AUDIO_AUDLOC_TC                   0x00008000
+#define GEN_AUDIO_AUDLOC_TBL                  0x00010000
+#define GEN_AUDIO_AUDLOC_TBR                  0x00020000
+#define GEN_AUDIO_AUDLOC_TSL                  0x00040000
+#define GEN_AUDIO_AUDLOC_TSR                  0x00080000
+#define GEN_AUDIO_AUDLOC_TBC                  0x00100000
+#define GEN_AUDIO_AUDLOC_BFC                  0x00200000
+#define GEN_AUDIO_AUDLOC_BFL                  0x00400000
+#define GEN_AUDIO_AUDLOC_BFR                  0x00800000
+#define GEN_AUDIO_AUDLOC_FLW                  0x01000000
+#define GEN_AUDIO_AUDLOC_FRW                  0x02000000
+#define GEN_AUDIO_AUDLOC_LS                   0x04000000
+#define GEN_AUDIO_AUDLOC_RS                   0x08000000
+
 struct bt_vcp_db {
 	struct gatt_db *db;
 	struct bt_vcs *vcs;
@@ -100,6 +130,10 @@ struct bt_vcp {
 	unsigned int vstate_id;
 	unsigned int vflag_id;
 
+	unsigned int vostate_id;
+	unsigned int vocs_audio_loc_id;
+	unsigned int vocs_ao_dec_id;
+
 	struct queue *notify;
 	struct queue *pending;
 
@@ -131,7 +165,6 @@ struct bt_vcs {
 	struct gatt_db_attribute *vf_ccc;
 };
 
-#define USERSET_AUDIO_LOC 0x01
 /* Contains local bt_vcp_db */
 struct vol_offset_state {
     uint16_t vol_offset;
@@ -142,7 +175,7 @@ struct bt_vocs {
     struct bt_vcp_db *vdb;
     struct vol_offset_state *vostate;
 	uint32_t vocs_audio_loc;
-	char vocs_ao_dec;
+	char *vocs_ao_dec;
     struct gatt_db_attribute *service;
     struct gatt_db_attribute *vos;
     struct gatt_db_attribute *vos_ccc;
@@ -931,8 +964,8 @@ static void vocs_voaodec_read(struct gatt_db_attribute *attrib,
 	struct bt_vocs *vocs = user_data;
 	struct iovec iov;
 
-	iov.iov_base = &vocs->voaodec;
-	iov.iov_len = sizeof(vocs->voaodec);
+	iov.iov_base = &vocs->vocs_ao_dec;
+	iov.iov_len = strlen(vocs->vocs_ao_dec);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
 							iov.iov_len);
@@ -1010,7 +1043,8 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 	vostate = new0(struct vol_offset_state, 1);
 
 	vocs->vostate = vostate;
-	vocs->vocs_audio_loc = USERSET_AUDIO_LOC;
+	vocs->vocs_audio_loc = GEN_AUDIO_AUDLOC_FL;
+	vocs->vocs_ao_dec = "Left Speaker";
 
 	/* Populate DB with VOCS attributes */
 	bt_uuid16_create(&uuid, VOL_OFFSET_CS_UUID);
@@ -1036,6 +1070,9 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 					BT_GATT_CHRC_PROP_NOTIFY,
 					vocs_voal_read, NULL,
 					vocs);
+
+	vocs->voal_ccc = gatt_db_service_add_ccc(vocs->service,
+					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
 	
 	bt_uuid16_create(&uuid, VOL_OFFSET_CP_CHRC_UUID);
 	vocs->vo_cp = gatt_db_service_add_characteristic(vocs->service,
@@ -1044,9 +1081,6 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 					BT_GATT_CHRC_PROP_WRITE,
 					NULL, vocs_cp_write,
 					vocs);
-
-	vocs->voal_ccc = gatt_db_service_add_ccc(vocs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
 
 	bt_uuid16_create(&uuid, AUDIO_OUTPUT_DESC_CHAR_UUID);
 	vocs->voaodec = gatt_db_service_add_characteristic(vocs->service,
@@ -1206,6 +1240,41 @@ static void vcp_vstate_notify(struct bt_vcp *vcp, uint16_t value_handle,
 	DBG(vcp, "Vol Counter 0x%x", vstate.counter);
 }
 
+static void vcp_voffset_state_notify(struct bt_vcp *vcp, uint16_t value_handle,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
+{
+	struct vol_offset_state vostate;
+
+	memcpy(&vostate, value, sizeof(struct vol_offset_state));
+
+	DBG(vcp, "Vol Offset 0x%x", vostate.vol_offset);
+	DBG(vcp, "Vol Offset Counter 0x%x", vostate.counter);
+}
+
+static void vcp_audio_loc_notify(struct bt_vcp *vcp, uint16_t value_handle,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
+{
+	uint32_t *vocs_audio_loc_n;
+
+	memcpy(vocs_audio_loc_n, value, sizeof(uint32_t));
+
+	DBG(vcp, "VOCS Audio Location 0x%x", *vocs_audio_loc_n);
+}
+
+
+static void vcp_audio_descriptor_notify(struct bt_vcp *vcp, uint16_t value_handle,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
+{
+	char *vocs_audio_dec_n;
+
+	memcpy(vocs_audio_dec_n, value, length);
+
+	DBG(vcp, "VOCS Audio Descriptor 0x%s", *vocs_audio_dec_n);
+}
+
 static void vcp_vflag_notify(struct bt_vcp *vcp, uint16_t value_handle,
 			     const uint8_t *value, uint16_t length,
 			     void *user_data)
@@ -1265,6 +1334,80 @@ static void read_vol_state(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
 	DBG(vcp, "Vol Set:%x", vs->vol_set);
 	DBG(vcp, "Vol Mute:%x", vs->mute);
 	DBG(vcp, "Vol Counter:%x", vs->counter);
+}
+
+static void read_vol_offset_state(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
+{
+	struct vol_offset_state *vos;
+	struct iovec iov = {
+		.iov_base = (void *) value,
+		.iov_len = length,
+	};
+
+	if (!success) {
+		DBG(vcp, "Unable to read Vol Offset State: error 0x%02x", att_ecode);
+		return;
+	}
+
+	vos = iov_pull_mem(&iov, sizeof(*vos));
+	if (!vos) {
+		DBG(vcp, "Unable to get Vol Offset State");
+		return;
+	}
+
+	DBG(vcp, "Vol Set:%x", vos->vol_offset);
+	DBG(vcp, "Vol Counter:%x", vos->counter);
+}
+
+static void read_vocs_audio_location(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
+{
+	uint32_t *vocs_audio_loc;
+	struct iovec iov = {
+		.iov_base = (void *) value,
+		.iov_len = length,
+	};
+
+	if (!success) {
+		DBG(vcp, "Unable to read VOCS Audio Location: error 0x%02x", att_ecode);
+		return;
+	}
+
+	vocs_audio_loc = iov_pull_mem(&iov, sizeof(uint32_t));
+	if (!*vocs_audio_loc) {
+		DBG(vcp, "Unable to get VOCS Audio Location");
+		return;
+	}
+
+	DBG(vcp, "VOCS Audio Loc:%x", *vocs_audio_loc);
+}
+
+
+static void read_vocs_audio_descriptor(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
+{
+	char *vocs_ao_dec_r;
+	struct iovec iov = {
+		.iov_base = (void *) value,
+		.iov_len = length,
+	};
+
+	if (!success) {
+		DBG(vcp, "Unable to read VOCS Audio Descriptor: error 0x%02x", att_ecode);
+		return;
+	}
+
+	vocs_ao_dec_r = iov_pull_mem(&iov, length);
+	if (!*vocs_ao_dec_r) {
+		DBG(vcp, "Unable to get VOCS Audio Descriptor");
+		return;
+	}
+
+	DBG(vcp, "VOCS Audio Descriptor:%s", *vocs_ao_dec_r);
 }
 
 static void vcp_pending_destroy(void *data)
@@ -1448,22 +1591,27 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 
 		vocs->vos = attr;
 
-		vcp_read_value(vcp, value_handle, read_vol_state, vcp);
+		vcp_read_value(vcp, value_handle, read_vol_offset_state, vcp);
 
-		vcp->vstate_id = vcp_register_notify(vcp, value_handle,
-						     vcp_vstate_notify, NULL);
+		vcp->vostate_id = vcp_register_notify(vcp, value_handle,
+						     vcp_voffset_state_notify, NULL);
 
 		return;
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_audio_loc)) {
-		DBG(vcp, "VOCS Volume CP found: handle 0x%04x", value_handle);
+		DBG(vcp, "VOCS Volume Audio Location found: handle 0x%04x", value_handle);
 
 		vocs = vcp_get_vocs(vcp);
-		if (!vocs || vocs->voal)
+		if (!vocs || vocs->voal) 
 			return;
 
 		vocs->voal = attr;
+
+		vcp_read_value(vcp, value_handle, read_vocs_audio_location, vcp);
+
+		vcp->vocs_audio_loc_id = vcp_register_notify(vcp, value_handle,
+						     vcp_audio_loc_notify, NULL);
 
 		return;
 	}
@@ -1481,7 +1629,7 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_audio_op_decs)) {
-		DBG(vcp, "VOCS Vol Flag found: handle 0x%04x", value_handle);
+		DBG(vcp, "VOCS Vol Audio Descriptor found: handle 0x%04x", value_handle);
 
 		vocs = vcp_get_vocs(vcp);
 		if (!vocs || vocs->voaodec)
@@ -1489,9 +1637,9 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 
 		vocs->voaodec = attr;
 
-		vcp_read_value(vcp, value_handle, read_vol_flag, vcp);
-		vcp->vflag_id = vcp_register_notify(vcp, value_handle,
-						    vcp_vflag_notify, NULL);
+		vcp_read_value(vcp, value_handle, read_vocs_audio_descriptor, vcp);
+		vcp->vocs_ao_dec_id = vcp_register_notify(vcp, value_handle,
+						    vcp_audio_descriptor_notify, NULL);
 
 	}
 
