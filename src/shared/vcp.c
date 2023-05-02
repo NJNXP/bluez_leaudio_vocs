@@ -1256,7 +1256,7 @@ static void vcp_audio_loc_notify(struct bt_vcp *vcp, uint16_t value_handle,
 				const uint8_t *value, uint16_t length,
 				void *user_data)
 {
-	uint32_t *vocs_audio_loc_n;
+	uint32_t *vocs_audio_loc_n = 0;
 
 	memcpy(vocs_audio_loc_n, value, sizeof(uint32_t));
 
@@ -1268,7 +1268,7 @@ static void vcp_audio_descriptor_notify(struct bt_vcp *vcp, uint16_t value_handl
 				const uint8_t *value, uint16_t length,
 				void *user_data)
 {
-	char *vocs_audio_dec_n;
+	char vocs_audio_dec_n[256] = {'\0'};
 
 	memcpy(vocs_audio_dec_n, value, length);
 
@@ -1692,6 +1692,9 @@ bool bt_vcp_attach(struct bt_vcp *vcp, struct bt_gatt_client *client)
 
 	bt_uuid16_create(&uuid, VCS_UUID);
 	gatt_db_foreach_service(vcp->ldb->db, &uuid, foreach_vcs_service, vcp);
+
+	bt_uuid16_create(&uuid, VOL_OFFSET_CS_UUID);
+	gatt_db_foreach_service(vcp->ldb->db, &uuid, foreach_vocs_service, vcp);
 
 	return true;
 }
