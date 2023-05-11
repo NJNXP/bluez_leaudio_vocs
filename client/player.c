@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2020  Intel Corporation. All rights reserved.
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -66,7 +67,10 @@ struct endpoint {
 	char *path;
 	char *uuid;
 	uint8_t codec;
+	uint16_t cid;
+	uint16_t vid;
 	struct iovec *caps;
+	struct iovec *meta;
 	bool auto_accept;
 	bool acquiring;
 	uint8_t cig;
@@ -1345,30 +1349,54 @@ static struct codec_preset lc3_presets[] = {
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_10, 155u),
 			LC3_10_UNFRAMED(155u, 5u, 20u, 40000u)),
 	/* QoS Configuration settings for high reliability audio data */
+	LC3_PRESET_HR("8_1_2",
+			LC3_PRESET_8KHZ(LC3_CONFIG_DURATION_7_5, 26u),
+			LC3_7_5_UNFRAMED(26u, 13u, 75u, 40000u)),
+	LC3_PRESET_HR("8_2_2",
+			LC3_PRESET_8KHZ(LC3_CONFIG_DURATION_10, 30u),
+			LC3_10_UNFRAMED(30u, 13u, 95u, 40000u)),
+	LC3_PRESET_HR("16_1_2",
+			LC3_PRESET_16KHZ(LC3_CONFIG_DURATION_7_5, 30u),
+			LC3_7_5_UNFRAMED(30u, 13u, 75u, 40000u)),
+	LC3_PRESET_HR("16_2_2",
+			LC3_PRESET_16KHZ(LC3_CONFIG_DURATION_10, 40u),
+			LC3_10_UNFRAMED(40u, 13u, 95u, 40000u)),
+	LC3_PRESET_HR("24_1_2",
+			LC3_PRESET_24KHZ(LC3_CONFIG_DURATION_7_5, 45u),
+			LC3_7_5_UNFRAMED(45u, 13u, 75u, 40000u)),
+	LC3_PRESET_HR("24_2_2",
+			LC3_PRESET_24KHZ(LC3_CONFIG_DURATION_10, 60u),
+			LC3_10_UNFRAMED(60u, 13u, 95u, 40000u)),
+	LC3_PRESET_HR("32_1_2",
+			LC3_PRESET_32KHZ(LC3_CONFIG_DURATION_7_5, 60u),
+			LC3_7_5_UNFRAMED(60u, 13u, 75u, 40000u)),
+	LC3_PRESET_HR("32_2_2",
+			LC3_PRESET_32KHZ(LC3_CONFIG_DURATION_10, 80u),
+			LC3_10_UNFRAMED(80u, 13u, 95u, 40000u)),
 	LC3_PRESET_HR("44_1_2",
 			LC3_PRESET_44KHZ(LC3_CONFIG_DURATION_7_5, 98u),
-			QOS_FRAMED_2M(8163u, 98u, 23u, 54u, 40000u)),
+			QOS_FRAMED_2M(8163u, 98u, 13u, 80u, 40000u)),
 	LC3_PRESET_HR("44_2_2",
 			LC3_PRESET_44KHZ(LC3_CONFIG_DURATION_10, 130u),
-			QOS_FRAMED_2M(10884u, 130u, 23u, 71u, 40000u)),
+			QOS_FRAMED_2M(10884u, 130u, 13u, 85u, 40000u)),
 	LC3_PRESET_HR("48_1_2",
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_7_5, 75u),
-			LC3_7_5_UNFRAMED(75u, 23u, 45u, 40000u)),
+			LC3_7_5_UNFRAMED(75u, 13u, 75u, 40000u)),
 	LC3_PRESET_HR("48_2_2",
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_10, 100u),
-			LC3_10_UNFRAMED(100u, 23u, 60u, 40000u)),
+			LC3_10_UNFRAMED(100u, 13u, 95u, 40000u)),
 	LC3_PRESET_HR("48_3_2",
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_7_5, 90u),
-			LC3_7_5_UNFRAMED(90u, 23u, 45u, 40000u)),
+			LC3_7_5_UNFRAMED(90u, 13u, 75u, 40000u)),
 	LC3_PRESET_HR("48_4_2",
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_10, 120u),
-			LC3_10_UNFRAMED(120u, 23u, 60u, 40000u)),
+			LC3_10_UNFRAMED(120u, 13u, 100u, 40000u)),
 	LC3_PRESET_HR("48_5_2",
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_7_5, 117u),
-			LC3_7_5_UNFRAMED(117u, 23u, 45u, 40000u)),
+			LC3_7_5_UNFRAMED(117u, 13u, 75u, 40000u)),
 	LC3_PRESET_HR("48_6_2",
 			LC3_PRESET_48KHZ(LC3_CONFIG_DURATION_10, 155u),
-			LC3_10_UNFRAMED(155u, 23u, 60u, 40000u)),
+			LC3_10_UNFRAMED(155u, 13u, 100u, 40000u)),
 };
 
 #define PRESET(_uuid, _presets, _default_index) \
@@ -1555,6 +1583,7 @@ struct endpoint_config {
 	GDBusProxy *proxy;
 	struct endpoint *ep;
 	struct iovec *caps;
+	struct iovec *meta;
 	uint8_t target_latency;
 	const struct codec_qos *qos;
 };
@@ -1565,6 +1594,7 @@ static void append_properties(DBusMessageIter *iter,
 	DBusMessageIter dict;
 	struct codec_qos *qos = (void *)cfg->qos;
 	const char *key = "Capabilities";
+	const char *meta = "Metadata";
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
 
@@ -1574,6 +1604,15 @@ static void append_properties(DBusMessageIter *iter,
 	g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
 					DBUS_TYPE_BYTE, &cfg->caps->iov_base,
 					cfg->caps->iov_len);
+
+	if (cfg->meta->iov_len) {
+		g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &meta,
+				DBUS_TYPE_BYTE, &cfg->meta->iov_base,
+				cfg->meta->iov_len);
+
+		bt_shell_printf("Metadata:\n");
+		bt_shell_hexdump(cfg->meta->iov_base, cfg->meta->iov_len);
+	}
 
 	if (!qos)
 		goto done;
@@ -1671,6 +1710,9 @@ static DBusMessage *endpoint_select_properties_reply(struct endpoint *ep,
 	/* Copy capabilities */
 	iov_append(&cfg->caps, preset->data.iov_base, preset->data.iov_len);
 	cfg->target_latency = preset->target_latency;
+
+	/* Copy metadata */
+	iov_append(&cfg->meta, cfg->ep->meta->iov_base, cfg->ep->meta->iov_len);
 
 	if (preset->qos.phy)
 		/* Set QoS parameters */
@@ -1815,8 +1857,15 @@ static void endpoint_free(void *data)
 	struct endpoint *ep = data;
 
 	if (ep->caps) {
-		g_free(ep->caps->iov_base);
+		if (ep->caps->iov_base)
+			g_free(ep->caps->iov_base);
 		g_free(ep->caps);
+	}
+
+	if (ep->meta) {
+		if (ep->meta->iov_base)
+			g_free(ep->meta->iov_base);
+		g_free(ep->meta);
 	}
 
 	if (ep->msg)
@@ -1865,10 +1914,63 @@ static gboolean endpoint_get_capabilities(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+struct vendor {
+	uint16_t cid;
+	uint16_t vid;
+} __packed;
+
+static gboolean endpoint_get_vendor(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct endpoint *ep = data;
+	struct vendor vendor = { ep->cid, ep->vid };
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &vendor);
+
+	return TRUE;
+}
+
+static gboolean endpoint_vendor_exists(const GDBusPropertyTable *property,
+							void *data)
+{
+	struct endpoint *ep = data;
+
+	return ep->cid && ep->vid;
+}
+
+static gboolean endpoint_get_metadata(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct endpoint *ep = data;
+	DBusMessageIter array;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+				DBUS_TYPE_BYTE_AS_STRING, &array);
+
+	dbus_message_iter_append_fixed_array(&array, DBUS_TYPE_BYTE,
+				&ep->meta->iov_base,
+				ep->meta->iov_len);
+
+	dbus_message_iter_close_container(iter, &array);
+
+	return TRUE;
+}
+
+static gboolean endpoint_metadata_exists(const GDBusPropertyTable *property,
+							void *data)
+{
+	struct endpoint *ep = data;
+
+	return ep->meta ? TRUE : FALSE;
+}
+
 static const GDBusPropertyTable endpoint_properties[] = {
 	{ "UUID", "s", endpoint_get_uuid, NULL, NULL },
 	{ "Codec", "y", endpoint_get_codec, NULL, NULL },
 	{ "Capabilities", "ay", endpoint_get_capabilities, NULL, NULL },
+	{ "Metadata", "ay", endpoint_get_metadata, NULL,
+				endpoint_metadata_exists },
+	{ "Vendor", "u", endpoint_get_vendor, NULL, endpoint_vendor_exists },
 	{ }
 };
 
@@ -1877,6 +1979,7 @@ static void register_endpoint_setup(DBusMessageIter *iter, void *user_data)
 	struct endpoint *ep = user_data;
 	DBusMessageIter dict;
 	const char *key = "Capabilities";
+	const char *meta = "Metadata";
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &ep->path);
 
@@ -1886,12 +1989,30 @@ static void register_endpoint_setup(DBusMessageIter *iter, void *user_data)
 
 	g_dbus_dict_append_entry(&dict, "Codec", DBUS_TYPE_BYTE, &ep->codec);
 
-	g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
+	if (ep->cid && ep->vid) {
+		struct vendor vendor = { ep->cid, ep->vid };
+
+		g_dbus_dict_append_entry(&dict, "Vendor", DBUS_TYPE_UINT32,
+						 &vendor);
+	}
+
+	if (ep->caps) {
+		g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
 					DBUS_TYPE_BYTE, &ep->caps->iov_base,
 					ep->caps->iov_len);
 
-	bt_shell_printf("Capabilities:\n");
-	bt_shell_hexdump(ep->caps->iov_base, ep->caps->iov_len);
+		bt_shell_printf("Capabilities:\n");
+		bt_shell_hexdump(ep->caps->iov_base, ep->caps->iov_len);
+	}
+
+	if (ep->meta) {
+		g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &meta,
+				DBUS_TYPE_BYTE, &ep->meta->iov_base,
+				ep->meta->iov_len);
+
+		bt_shell_printf("Metadata:\n");
+		bt_shell_hexdump(ep->meta->iov_base, ep->meta->iov_len);
+	}
 
 	dbus_message_iter_close_container(iter, &dict);
 }
@@ -1907,9 +2028,11 @@ static void register_endpoint_reply(DBusMessage *message, void *user_data)
 		bt_shell_printf("Failed to register endpoint: %s\n",
 				error.name);
 		dbus_error_free(&error);
-		local_endpoints = g_list_remove(local_endpoints, ep);
-		g_dbus_unregister_interface(dbus_conn, ep->path,
+		if (g_list_find(local_endpoints, ep)) {
+			local_endpoints = g_list_remove(local_endpoints, ep);
+			g_dbus_unregister_interface(dbus_conn, ep->path,
 						BLUEZ_MEDIA_ENDPOINT_INTERFACE);
+		}
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 	}
 
@@ -2010,19 +2133,51 @@ static void endpoint_auto_accept(const char *input, void *user_data)
 	bt_shell_prompt_input(ep->path, "CIG (auto/value):", endpoint_cig, ep);
 }
 
+static void endpoint_set_metadata(const char *input, void *user_data)
+{
+	struct endpoint *ep = user_data;
+
+	if (!strcasecmp(input, "n") || !strcasecmp(input, "no")) {
+		free(ep->meta->iov_base);
+		ep->meta = NULL;
+		goto done;
+	}
+
+	if (!ep->meta)
+		ep->meta = g_new0(struct iovec, 1);
+
+	ep->meta->iov_base = str2bytearray((char *) input, &ep->meta->iov_len);
+	if (!ep->meta->iov_base) {
+		free(ep->meta);
+		ep->meta = NULL;
+	}
+
+done:
+	bt_shell_prompt_input(ep->path, "Auto Accept (yes/no):",
+					endpoint_auto_accept, ep);
+}
+
 static void endpoint_set_capabilities(const char *input, void *user_data)
 {
 	struct endpoint *ep = user_data;
 
-	if (ep->caps)
+	if (ep->caps && ep->caps->iov_base) {
 		g_free(ep->caps->iov_base);
-	else
+		ep->caps = g_new0(struct iovec, 1);
+	} else
 		ep->caps = g_new0(struct iovec, 1);
 
 	ep->caps->iov_base = str2bytearray((char *) input, &ep->caps->iov_len);
 
-	bt_shell_prompt_input(ep->path, "Auto Accept (yes/no):",
-						endpoint_auto_accept, ep);
+	if (ep->caps->iov_len == 0x01 &&
+			(*(uint8_t *)(ep->caps->iov_base)) == 0x00) {
+		g_free(ep->caps->iov_base);
+		ep->caps->iov_base = NULL;
+		ep->caps->iov_len = 0x00;
+	}
+
+	bt_shell_prompt_input(ep->path, "Enter Metadata (value/no):",
+					endpoint_set_metadata, ep);
 }
 
 static char *uuid_generator(const char *text, int state)
@@ -2069,13 +2224,25 @@ static void cmd_register_endpoint(int argc, char *argv[])
 {
 	struct endpoint *ep;
 	char *endptr = NULL;
+	char **list;
 
 	ep = g_new0(struct endpoint, 1);
 	ep->uuid = g_strdup(argv[1]);
 	ep->codec = strtol(argv[2], &endptr, 0);
+	ep->cid = 0x0000;
+	ep->vid = 0x0000;
 	ep->path = g_strdup_printf("%s/ep%u", BLUEZ_MEDIA_ENDPOINT_PATH,
 					g_list_length(local_endpoints));
 	local_endpoints = g_list_append(local_endpoints, ep);
+
+	if (strrchr(argv[2], ':')) {
+		list = g_strsplit(argv[2], ":", 2);
+
+		ep->codec = 0xff;
+		ep->vid = strtol(list[0], &endptr, 0);
+		endptr = NULL;
+		ep->cid = strtol(list[1], &endptr, 0);
+	}
 
 	if (argc > 3)
 		endpoint_set_capabilities(argv[3], ep);
@@ -2638,7 +2805,7 @@ static const struct bt_shell_menu endpoint_menu = {
 	{ "show",         "<endpoint>", cmd_show_endpoint,
 						"Endpoint information",
 						endpoint_generator },
-	{ "register",     "<UUID> <codec> [capabilities...]",
+	{ "register",     "<UUID> <codec[:company]> [capabilities...]",
 						cmd_register_endpoint,
 						"Register Endpoint",
 						uuid_generator },
@@ -3453,7 +3620,7 @@ static bool transport_timer_read(struct io *io, void *user_data)
 	}
 
 	/* num of packets = latency (ms) / interval (us) */
-	num = (qos.out.latency * 1000 / qos.out.interval);
+	num = (qos.ucast.out.latency * 1000 / qos.ucast.out.interval);
 
 	ret = transport_send_seq(transport, transport->fd, num);
 	if (ret < 0) {
@@ -3489,8 +3656,8 @@ static int transport_send(struct transport *transport, int fd,
 		return -errno;
 
 	memset(&ts, 0, sizeof(ts));
-	ts.it_value.tv_nsec = qos->out.latency * 1000000;
-	ts.it_interval.tv_nsec = qos->out.latency * 1000000;
+	ts.it_value.tv_nsec = qos->ucast.out.latency * 1000000;
+	ts.it_interval.tv_nsec = qos->ucast.out.latency * 1000000;
 
 	if (timerfd_settime(timer_fd, TFD_TIMER_ABSTIME, &ts, NULL) < 0)
 		return -errno;
@@ -3509,48 +3676,54 @@ static void cmd_send_transport(int argc, char *argv[])
 {
 	GDBusProxy *proxy;
 	struct transport *transport;
-	int fd, err;
+	int fd = -1, err;
 	struct bt_iso_qos qos;
 	socklen_t len;
+	int i;
 
-	proxy = g_dbus_proxy_lookup(transports, NULL, argv[1],
+	for (i = 1; i < argc; i++) {
+		proxy = g_dbus_proxy_lookup(transports, NULL, argv[i],
 					BLUEZ_MEDIA_TRANSPORT_INTERFACE);
-	if (!proxy) {
-		bt_shell_printf("Transport %s not found\n", argv[1]);
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
-	}
+		if (!proxy) {
+			bt_shell_printf("Transport %s not found\n", argv[i]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
 
-	transport = find_transport(proxy);
-	if (!transport) {
-		bt_shell_printf("Transport %s not acquired\n", argv[1]);
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
-	}
+		transport = find_transport(proxy);
+		if (!transport) {
+			bt_shell_printf("Transport %s not acquired\n", argv[i]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
 
-	if (transport->sk < 0) {
-		bt_shell_printf("No Transport Socked found\n");
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
-	}
+		if (transport->sk < 0) {
+			bt_shell_printf("No Transport Socked found\n");
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
 
-	fd = open_file(argv[2], O_RDONLY);
-	if (fd < 0)
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		if (i + 1 < argc) {
+			fd = open_file(argv[++i], O_RDONLY);
+			if (fd < 0)
+				return bt_shell_noninteractive_quit(
+								EXIT_FAILURE);
+		}
 
-	bt_shell_printf("Sending ...\n");
+		bt_shell_printf("Sending ...\n");
 
-	/* Read QoS if available */
-	memset(&qos, 0, sizeof(qos));
-	len = sizeof(qos);
-	if (getsockopt(transport->sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos,
+		/* Read QoS if available */
+		memset(&qos, 0, sizeof(qos));
+		len = sizeof(qos);
+		if (getsockopt(transport->sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos,
 							&len) < 0)
-		err = transport_send(transport, fd, NULL);
-	else
-		err = transport_send(transport, fd, &qos);
+			err = transport_send(transport, fd, NULL);
+		else
+			err = transport_send(transport, fd, &qos);
 
-	if (err < 0) {
-		bt_shell_printf("Unable to send: %s (%d)", strerror(-err),
-								-err);
-		close(fd);
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		if (err < 0) {
+			bt_shell_printf("Unable to send: %s (%d)",
+						strerror(-err), -err);
+			close(fd);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
 	}
 
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
@@ -3653,7 +3826,8 @@ static const struct bt_shell_menu transport_menu = {
 	{ "release",     "<transport> [transport1...]", cmd_release_transport,
 						"Release Transport",
 						transport_generator },
-	{ "send",        "<transport> <filename>", cmd_send_transport,
+	{ "send",        "<transport> <filename> [transport1...]",
+						cmd_send_transport,
 						"Send contents of a file",
 						transport_generator },
 	{ "receive",     "<transport> [filename]", cmd_receive_transport,

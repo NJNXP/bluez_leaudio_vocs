@@ -290,6 +290,20 @@ static void index_removed_callback(uint16_t index, uint16_t length,
 	tester_post_teardown_complete();
 }
 
+#define MAX_COREDUMP_LINE_LEN	40
+
+struct devcoredump_test_data {
+	enum devcoredump_state {
+		HCI_DEVCOREDUMP_IDLE,
+		HCI_DEVCOREDUMP_ACTIVE,
+		HCI_DEVCOREDUMP_DONE,
+		HCI_DEVCOREDUMP_ABORT,
+		HCI_DEVCOREDUMP_TIMEOUT,
+	} state;
+	unsigned int timeout;
+	char data[MAX_COREDUMP_LINE_LEN];
+};
+
 struct hci_cmd_data {
 	uint16_t opcode;
 	uint8_t len;
@@ -362,6 +376,8 @@ struct generic_data {
 	bool set_adv;
 	const uint8_t *adv_data;
 	uint8_t adv_data_len;
+	const struct devcoredump_test_data *dump_data;
+	const char (*expect_dump_data)[MAX_COREDUMP_LINE_LEN];
 };
 
 static const uint8_t set_exp_feat_param_debug[] = {
@@ -9429,7 +9445,7 @@ static const struct generic_data add_ext_advertising_conn_off_1m = {
 static const uint8_t get_phy_param[] = {
 	0xff, 0x7f, 0x00, 0x00,	/* All PHYs */
 	0xfe, 0x79,	0x00, 0x00, /* All PHYs except BR 1M 1SLOT, LE 1M TX & LE 1M RX */
-	0xff, 0x07, 0x00, 0x00, /* All BREDR PHYs and LE 1M TX & LE 1M RX */
+	0xff, 0x7f, 0x00, 0x00, /* All PHYs */
 };
 
 static const struct generic_data get_phy_success = {
@@ -9490,26 +9506,6 @@ static const struct generic_data set_phy_coded_success = {
 
 static const uint8_t set_phy_all_param[] = {
 	0xff, 0x7f,	0x00, 0x00	/* All PHYs */
-};
-
-static const uint8_t set_default_phy_all_param[] = {
-	0x00, 		/* preference is there for tx and rx */
-	0x07,		/* 1m 2m coded tx */
-	0x07,		/* 1m 2m coded rx */
-};
-
-static const struct generic_data set_phy_all_success = {
-	.setup_settings = settings_powered_le,
-	.send_opcode = MGMT_OP_SET_PHY_CONFIGURATION,
-	.send_param = set_phy_all_param,
-	.send_len = sizeof(set_phy_all_param),
-	.expect_status = MGMT_STATUS_SUCCESS,
-	.expect_hci_command = BT_HCI_CMD_LE_SET_DEFAULT_PHY,
-	.expect_hci_param = set_default_phy_all_param,
-	.expect_hci_len = sizeof(set_default_phy_all_param),
-	.expect_alt_ev = MGMT_EV_PHY_CONFIGURATION_CHANGED,
-	.expect_alt_ev_param = set_phy_all_param,
-	.expect_alt_ev_len = sizeof(set_phy_all_param),
 };
 
 static const uint8_t set_phy_2m_tx_param[] = {
@@ -9619,10 +9615,13 @@ static const struct generic_data start_discovery_le_ext_scan_enable = {
 	.expect_alt_ev_len = sizeof(start_discovery_le_evt),
 };
 
-static const char start_discovery_valid_ext_scan_param[] = {
+static const char start_discovery_ext_scan_param[] = {
 	0x01,			/* Own Addr type*/
 	0x00,			/* Scan filter policy*/
-	0x01,			/*Phys - 1m */
+	0x05,			/* Phys - 1m and Coded*/
+	0x01,			/* Type */
+	0x12, 0x00,		/* Interval */
+	0x12, 0x00,		/* Window */
 	0x01,			/* Type */
 	0x12, 0x00,		/* Interval */
 	0x12, 0x00,		/* Window */
@@ -9637,8 +9636,8 @@ static const struct generic_data start_discovery_le_ext_scan_param = {
 	.expect_param = start_discovery_le_param,
 	.expect_len = sizeof(start_discovery_le_param),
 	.expect_hci_command = BT_HCI_CMD_LE_SET_EXT_SCAN_PARAMS,
-	.expect_hci_param = start_discovery_valid_ext_scan_param,
-	.expect_hci_len = sizeof(start_discovery_valid_ext_scan_param),
+	.expect_hci_param = start_discovery_ext_scan_param,
+	.expect_hci_len = sizeof(start_discovery_ext_scan_param),
 	.expect_alt_ev = MGMT_EV_DISCOVERING,
 	.expect_alt_ev_param = start_discovery_le_evt,
 	.expect_alt_ev_len = sizeof(start_discovery_le_evt),
@@ -9670,6 +9669,15 @@ static const struct generic_data stop_discovery_le_ext_scan_disable = {
 	.expect_alt_ev_len = sizeof(stop_discovery_evt),
 };
 
+static const char start_discovery_2m_ext_scan_param[] = {
+	0x01,			/* Own Addr type*/
+	0x00,			/* Scan filter policy*/
+	0x01,			/* Phys - 1m and Coded*/
+	0x01,			/* Type */
+	0x12, 0x00,		/* Interval */
+	0x12, 0x00,		/* Window */
+};
+
 static const struct generic_data start_discovery_le_2m_scan_param = {
 	.setup_settings = settings_powered_le,
 	.setup_send_opcode = MGMT_OP_SET_PHY_CONFIGURATION,
@@ -9682,8 +9690,8 @@ static const struct generic_data start_discovery_le_2m_scan_param = {
 	.expect_param = start_discovery_bredrle_param,
 	.expect_len = sizeof(start_discovery_bredrle_param),
 	.expect_hci_command = BT_HCI_CMD_LE_SET_EXT_SCAN_PARAMS,
-	.expect_hci_param = start_discovery_valid_ext_scan_param,
-	.expect_hci_len = sizeof(start_discovery_valid_ext_scan_param),
+	.expect_hci_param = start_discovery_2m_ext_scan_param,
+	.expect_hci_len = sizeof(start_discovery_2m_ext_scan_param),
 	.expect_alt_ev = MGMT_EV_DISCOVERING,
 	.expect_alt_ev_param = start_discovery_evt,
 	.expect_alt_ev_len = sizeof(start_discovery_evt),
@@ -12511,6 +12519,139 @@ static void test_suspend_resume_success_10(const void *test_data)
 	tester_wait(2, trigger_force_resume, NULL);
 }
 
+#define MAX_COREDUMP_BUF_LEN	512
+
+static const struct devcoredump_test_data data_complete_dump = {
+	.state = HCI_DEVCOREDUMP_DONE,
+	.data = "test data",
+};
+
+static const char expected_complete_dump[][MAX_COREDUMP_LINE_LEN] = {
+	"Bluetooth devcoredump",
+	"State: 2",
+	"Controller Name: vhci_ctrl",
+	"Firmware Version: vhci_fw",
+	"Driver: vhci_drv",
+	"Vendor: vhci",
+	"--- Start dump ---",
+	"", /* end of header data */
+};
+
+static const struct generic_data dump_complete = {
+	.dump_data = &data_complete_dump,
+	.expect_dump_data = expected_complete_dump,
+};
+
+static const struct devcoredump_test_data data_abort_dump = {
+	.state = HCI_DEVCOREDUMP_ABORT,
+	.data = "test data",
+};
+
+static const char expected_abort_dump[][MAX_COREDUMP_LINE_LEN] = {
+	"Bluetooth devcoredump",
+	"State: 3",
+	"Controller Name: vhci_ctrl",
+	"Firmware Version: vhci_fw",
+	"Driver: vhci_drv",
+	"Vendor: vhci",
+	"--- Start dump ---",
+	"", /* end of header data */
+};
+
+static const struct generic_data dump_abort = {
+	.dump_data = &data_abort_dump,
+	.expect_dump_data = expected_abort_dump,
+};
+
+static const struct devcoredump_test_data data_timeout_dump = {
+	.state = HCI_DEVCOREDUMP_TIMEOUT,
+	.timeout = 1,
+	.data = "test data",
+};
+
+static const char expected_timeout_dump[][MAX_COREDUMP_LINE_LEN] = {
+	"Bluetooth devcoredump",
+	"State: 4",
+	"Controller Name: vhci_ctrl",
+	"Firmware Version: vhci_fw",
+	"Driver: vhci_drv",
+	"Vendor: vhci",
+	"--- Start dump ---",
+	"", /* end of header data */
+};
+
+static const struct generic_data dump_timeout = {
+	.dump_data = &data_timeout_dump,
+	.expect_dump_data = expected_timeout_dump,
+};
+
+static void verify_devcd(void *user_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+	struct vhci *vhci = hciemu_get_vhci(data->hciemu);
+	char buf[MAX_COREDUMP_BUF_LEN] = {0};
+	char delim[] = "\n";
+	char *line;
+	char *saveptr;
+	int i = 0;
+
+	/* Read the generated devcoredump file */
+	if (vhci_read_devcd(vhci, buf, sizeof(buf)) <= 0) {
+		tester_warn("Unable to read devcoredump");
+		tester_test_failed();
+		return;
+	}
+
+	/* Verify if all devcoredump header fields are present */
+	line = strtok_r(buf, delim, &saveptr);
+	while (strlen(test->expect_dump_data[i])) {
+		if (!line || strcmp(line, test->expect_dump_data[i])) {
+			tester_warn("Incorrect coredump data: %s (expected %s)",
+					line, test->expect_dump_data[i]);
+			tester_test_failed();
+			return;
+		}
+
+		if (!strcmp(strtok(line, ":"), "State")) {
+			/* After updating the devcoredump state, the HCI
+			 * devcoredump API adds a `\0` at the end. Skip it
+			 * before reading the next line.
+			 */
+			saveptr++;
+		}
+
+		line = strtok_r(NULL, delim, &saveptr);
+		i++;
+	}
+
+	/* Verify the devcoredump data */
+	if (!line || strcmp(line, test->dump_data->data)) {
+		tester_warn("Incorrect coredump data: %s (expected %s)", line,
+				test->dump_data->data);
+		tester_test_failed();
+		return;
+	}
+
+	tester_test_passed();
+}
+
+static void test_hci_devcd(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+	struct vhci *vhci = hciemu_get_vhci(data->hciemu);
+
+	/* Triggers the devcoredump */
+	if (vhci_force_devcd(vhci, test->dump_data, sizeof(*test->dump_data))) {
+		tester_warn("Unable to set force_devcoredump");
+		tester_test_abort();
+		return;
+	}
+
+	tester_wait(test->dump_data->timeout + 1, verify_devcd, NULL);
+}
+
 int main(int argc, char *argv[])
 {
 	tester_init(&argc, &argv);
@@ -14018,9 +14159,6 @@ int main(int argc, char *argv[])
 	test_bredrle50("Set PHY coded Succcess", &set_phy_coded_success,
 					NULL, test_command_generic);
 
-	test_bredrle50("Set PHY 1m 2m coded Succcess", &set_phy_all_success,
-					NULL, test_command_generic);
-
 	test_bredrle50("Set PHY 2m tx success", &set_phy_2m_tx_success,
 					NULL, test_command_generic);
 
@@ -14650,6 +14788,30 @@ int main(int argc, char *argv[])
 				&ll_privacy_set_device_flag_1,
 				setup_ll_privacy_add_device,
 				test_command_generic);
+
+	/* HCI Devcoredump
+	 * Setup : Power on
+	 * Run: Trigger devcoredump via force_devcoredump
+	 * Expect: Devcoredump is generated with correct data
+	 */
+	test_bredrle("HCI Devcoredump - Dump Complete", &dump_complete, NULL,
+			test_hci_devcd);
+
+	/* HCI Devcoredump
+	 * Setup : Power on
+	 * Run: Trigger devcoredump via force_devcoredump
+	 * Expect: Devcoredump is generated with correct data
+	 */
+	test_bredrle("HCI Devcoredump - Dump Abort", &dump_abort, NULL,
+			test_hci_devcd);
+
+	/* HCI Devcoredump
+	 * Setup : Power on
+	 * Run: Trigger devcoredump via force_devcoredump
+	 * Expect: Devcoredump is generated with correct data
+	 */
+	test_bredrle_full("HCI Devcoredump - Dump Timeout", &dump_timeout, NULL,
+				test_hci_devcd, 3);
 
 	return tester_run();
 }

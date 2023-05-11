@@ -91,6 +91,12 @@ struct bt_pacs {
 	struct gatt_db_attribute *context_ccc;
 	struct gatt_db_attribute *supported_context;
 	struct gatt_db_attribute *supported_context_ccc;
+	uint32_t source_loc_value;
+	uint32_t sink_loc_value;
+	uint16_t source_context_value;
+	uint16_t sink_context_value;
+	uint16_t supported_source_context_value;
+	uint16_t supported_sink_context_value;
 };
 
 struct bt_ase {
@@ -114,7 +120,6 @@ struct bt_bap_db {
 	struct bt_ascs *ascs;
 	struct queue *sinks;
 	struct queue *sources;
-	struct queue *endpoints;
 };
 
 struct bt_bap_req {
@@ -125,17 +130,6 @@ struct bt_bap_req {
 	struct iovec *iov;
 	size_t len;
 	bt_bap_stream_func_t func;
-	void *user_data;
-};
-
-typedef void (*bap_func_t)(struct bt_bap *bap, bool success, uint8_t att_ecode,
-					const uint8_t *value, uint16_t length,
-					void *user_data);
-
-struct bt_bap_pending {
-	unsigned int id;
-	struct bt_bap *bap;
-	bap_func_t func;
 	void *user_data;
 };
 
@@ -157,14 +151,17 @@ struct bt_bap {
 	struct bt_gatt_client *client;
 	struct bt_att *att;
 	struct bt_bap_req *req;
-	unsigned int cp_id;
 
+	unsigned int cp_id;
 	unsigned int process_id;
 	unsigned int disconn_id;
+	unsigned int idle_id;
+
 	struct queue *reqs;
-	struct queue *pending;
 	struct queue *notify;
 	struct queue *streams;
+	struct queue *local_eps;
+	struct queue *remote_eps;
 
 	struct queue *pac_cbs;
 	struct queue *ready_cbs;
@@ -180,8 +177,6 @@ struct bt_bap_pac {
 	struct bt_bap_db *bdb;
 	char *name;
 	uint8_t type;
-	uint32_t locations;
-	uint16_t contexts;
 	struct bt_bap_codec codec;
 	struct bt_bap_pac_qos qos;
 	struct iovec *data;
@@ -191,6 +186,7 @@ struct bt_bap_pac {
 };
 
 struct bt_bap_endpoint {
+	struct bt_bap *bap;
 	struct bt_bap_db *bdb;
 	struct bt_bap_stream *stream;
 	struct gatt_db_attribute *attr;
@@ -211,7 +207,6 @@ struct bt_bap_stream_io {
 struct bt_bap_stream {
 	struct bt_bap *bap;
 	struct bt_bap_endpoint *ep;
-	struct queue *pacs;
 	struct bt_bap_pac *lpac;
 	struct bt_bap_pac *rpac;
 	struct iovec *cc;
@@ -388,7 +383,8 @@ static void pacs_sink_loc_read(struct gatt_db_attribute *attrib,
 				uint8_t opcode, struct bt_att *att,
 				void *user_data)
 {
-	uint32_t value = 0x00000003;
+	struct bt_pacs *pacs = user_data;
+	uint32_t value = cpu_to_le32(pacs->sink_loc_value);
 
 	gatt_db_attribute_read_result(attrib, id, 0, (void *) &value,
 							sizeof(value));
@@ -420,7 +416,8 @@ static void pacs_source_loc_read(struct gatt_db_attribute *attrib,
 				uint8_t opcode, struct bt_att *att,
 				void *user_data)
 {
-	uint32_t value = 0x00000001;
+	struct bt_pacs *pacs = user_data;
+	uint32_t value = cpu_to_le32(pacs->source_loc_value);
 
 	gatt_db_attribute_read_result(attrib, id, 0, (void *) &value,
 							sizeof(value));
@@ -431,9 +428,10 @@ static void pacs_context_read(struct gatt_db_attribute *attrib,
 				uint8_t opcode, struct bt_att *att,
 				void *user_data)
 {
+	struct bt_pacs *pacs = user_data;
 	struct bt_pacs_context ctx = {
-		.snk = 0x0fff,
-		.src = 0x000e
+		.snk = cpu_to_le16(pacs->sink_context_value),
+		.src = cpu_to_le16(pacs->source_context_value)
 	};
 
 	gatt_db_attribute_read_result(attrib, id, 0, (void *) &ctx,
@@ -445,9 +443,10 @@ static void pacs_supported_context_read(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
+	struct bt_pacs *pacs = user_data;
 	struct bt_pacs_context ctx = {
-		.snk = 0x0fff,
-		.src = 0x000e
+		.snk = cpu_to_le16(pacs->supported_sink_context_value),
+		.src = cpu_to_le16(pacs->supported_source_context_value)
 	};
 
 	gatt_db_attribute_read_result(attrib, id, 0, (void *) &ctx,
@@ -463,6 +462,14 @@ static struct bt_pacs *pacs_new(struct gatt_db *db)
 		return NULL;
 
 	pacs = new0(struct bt_pacs, 1);
+
+	/* Set default values */
+	pacs->sink_loc_value = 0x00000003;
+	pacs->source_loc_value = 0x00000001;
+	pacs->sink_context_value = 0x0fff;
+	pacs->source_context_value = 0x000e;
+	pacs->supported_sink_context_value = 0x0fff;
+	pacs->supported_source_context_value = 0x000e;
 
 	/* Populate DB with PACS attributes */
 	bt_uuid16_create(&uuid, PACS_UUID);
@@ -615,7 +622,8 @@ static struct bt_bap_endpoint *bap_endpoint_new(struct bt_bap_db *bdb,
 	return ep;
 }
 
-static struct bt_bap_endpoint *bap_get_endpoint(struct bt_bap_db *db,
+static struct bt_bap_endpoint *bap_get_endpoint(struct queue *endpoints,
+						struct bt_bap_db *db,
 						struct gatt_db_attribute *attr)
 {
 	struct bt_bap_endpoint *ep;
@@ -623,7 +631,7 @@ static struct bt_bap_endpoint *bap_get_endpoint(struct bt_bap_db *db,
 	if (!db || !attr)
 		return NULL;
 
-	ep = queue_find(db->endpoints, bap_endpoint_match, attr);
+	ep = queue_find(endpoints, bap_endpoint_match, attr);
 	if (ep)
 		return ep;
 
@@ -631,7 +639,7 @@ static struct bt_bap_endpoint *bap_get_endpoint(struct bt_bap_db *db,
 	if (!ep)
 		return NULL;
 
-	queue_push_tail(db->endpoints, ep);
+	queue_push_tail(endpoints, ep);
 
 	return ep;
 }
@@ -644,23 +652,22 @@ static bool bap_endpoint_match_id(const void *data, const void *match_data)
 	return (ep->id == id);
 }
 
-static struct bt_bap_endpoint *bap_get_endpoint_id(struct bt_bap *bap,
-						struct bt_bap_db *db,
-						uint8_t id)
+static struct bt_bap_endpoint *bap_get_local_endpoint_id(struct bt_bap *bap,
+								uint8_t id)
 {
 	struct bt_bap_endpoint *ep;
 	struct gatt_db_attribute *attr = NULL;
 	size_t i;
 
-	if (!bap || !db)
+	if (!bap)
 		return NULL;
 
-	ep = queue_find(db->endpoints, bap_endpoint_match_id, UINT_TO_PTR(id));
+	ep = queue_find(bap->local_eps, bap_endpoint_match_id, UINT_TO_PTR(id));
 	if (ep)
 		return ep;
 
-	for (i = 0; i < ARRAY_SIZE(db->ascs->ase); i++) {
-		struct bt_ase *ase = db->ascs->ase[i];
+	for (i = 0; i < ARRAY_SIZE(bap->ldb->ascs->ase); i++) {
+		struct bt_ase *ase = bap->ldb->ascs->ase[i];
 
 		if (id) {
 			if (ase->id != id)
@@ -669,7 +676,7 @@ static struct bt_bap_endpoint *bap_get_endpoint_id(struct bt_bap *bap,
 			break;
 		}
 
-		ep = queue_find(db->endpoints, bap_endpoint_match, ase->attr);
+		ep = queue_find(bap->local_eps, bap_endpoint_match, ase->attr);
 		if (!ep) {
 			attr = ase->attr;
 			break;
@@ -679,12 +686,12 @@ static struct bt_bap_endpoint *bap_get_endpoint_id(struct bt_bap *bap,
 	if (!attr)
 		return NULL;
 
-	ep = bap_endpoint_new(db, attr);
+	ep = bap_endpoint_new(bap->ldb, attr);
 	if (!ep)
 		return NULL;
 
 	ep->id = id;
-	queue_push_tail(db->endpoints, ep);
+	queue_push_tail(bap->local_eps, ep);
 
 	return ep;
 }
@@ -696,7 +703,8 @@ static void ascs_ase_read(struct gatt_db_attribute *attrib,
 {
 	struct bt_ase *ase = user_data;
 	struct bt_bap *bap = bap_get_session(att, ase->ascs->bdb->db);
-	struct bt_bap_endpoint *ep = bap_get_endpoint(bap->ldb, attrib);
+	struct bt_bap_endpoint *ep = bap_get_endpoint(bap->local_eps,
+							bap->ldb, attrib);
 	struct bt_ascs_ase_status rsp;
 
 	if (!ase || !bap || !ep) {
@@ -1160,6 +1168,14 @@ static void bap_stream_set_io(void *data, void *user_data)
 	}
 }
 
+static struct bt_bap *bt_bap_ref_safe(struct bt_bap *bap)
+{
+	if (!bap || !bap->ref_count)
+		return NULL;
+
+	return bt_bap_ref(bap);
+}
+
 static void bap_stream_state_changed(struct bt_bap_stream *stream)
 {
 	struct bt_bap *bap = stream->bap;
@@ -1170,7 +1186,14 @@ static void bap_stream_state_changed(struct bt_bap_stream *stream)
 			bt_bap_stream_statestr(stream->ep->old_state),
 			bt_bap_stream_statestr(stream->ep->state));
 
-	bt_bap_ref(bap);
+	/* Check if ref_count is already 0 which means detaching is in
+	 * progress.
+	 */
+	bap = bt_bap_ref_safe(bap);
+	if (!bap) {
+		bap_stream_detach(stream);
+		return;
+	}
 
 	/* Pre notification updates */
 	switch (stream->ep->state) {
@@ -1470,7 +1493,7 @@ static uint8_t ascs_config(struct bt_ascs *ascs, struct bt_bap *bap,
 	DBG(bap, "codec 0x%02x phy 0x%02x latency %u", req->codec.id, req->phy,
 							req->latency);
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -1552,7 +1575,7 @@ static uint8_t ascs_qos(struct bt_ascs *ascs, struct bt_bap *bap,
 			req->cig, req->cis, qos.interval, qos.framing, qos.phy,
 			qos.sdu, qos.rtn, qos.latency, qos.delay);
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "%s: Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -1675,7 +1698,7 @@ static uint8_t ascs_enable(struct bt_ascs *ascs, struct bt_bap *bap,
 
 	req = util_iov_pull_mem(iov, sizeof(*req));
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->meta.ase);
+	ep = bap_get_local_endpoint_id(bap, req->meta.ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->meta.ase);
 		ascs_ase_rsp_add(rsp, req->meta.ase,
@@ -1739,7 +1762,7 @@ static uint8_t ascs_start(struct bt_ascs *ascs, struct bt_bap *bap,
 
 	req = util_iov_pull_mem(iov, sizeof(*req));
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -1811,7 +1834,7 @@ static uint8_t ascs_disable(struct bt_ascs *ascs, struct bt_bap *bap,
 
 	req = util_iov_pull_mem(iov, sizeof(*req));
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -1886,7 +1909,7 @@ static uint8_t ascs_stop(struct bt_ascs *ascs, struct bt_bap *bap,
 
 	req = util_iov_pull_mem(iov, sizeof(*req));
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -1951,7 +1974,7 @@ static uint8_t ascs_metadata(struct bt_ascs *ascs, struct bt_bap *bap,
 
 	req = util_iov_pull_mem(iov, sizeof(*req));
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -1995,7 +2018,7 @@ static uint8_t ascs_release(struct bt_ascs *ascs, struct bt_bap *bap,
 
 	req = util_iov_pull_mem(iov, sizeof(*req));
 
-	ep = bap_get_endpoint_id(bap, bap->ldb, req->ase);
+	ep = bap_get_local_endpoint_id(bap, req->ase);
 	if (!ep) {
 		DBG(bap, "Invalid ASE ID 0x%02x", req->ase);
 		ascs_ase_rsp_add(rsp, req->ase,
@@ -2181,7 +2204,6 @@ static struct bt_bap_db *bap_db_new(struct gatt_db *db)
 	bdb->db = gatt_db_ref(db);
 	bdb->sinks = queue_new();
 	bdb->sources = queue_new();
-	bdb->endpoints = queue_new();
 
 	if (!bap_db)
 		bap_db = queue_new();
@@ -2435,6 +2457,20 @@ uint8_t bt_bap_pac_get_type(struct bt_bap_pac *pac)
 	return pac->type;
 }
 
+uint32_t bt_bap_pac_get_locations(struct bt_bap_pac *pac)
+{
+	struct bt_pacs *pacs = pac->bdb->pacs;
+
+	switch (pac->type) {
+	case BT_BAP_SOURCE:
+		return pacs->source_loc_value;
+	case BT_BAP_SINK:
+		return pacs->sink_loc_value;
+	default:
+		return 0;
+	}
+}
+
 static void notify_pac_removed(void *data, void *user_data)
 {
 	struct bt_bap_pac_changed *changed = data;
@@ -2511,7 +2547,6 @@ static void bap_db_free(void *data)
 
 	queue_destroy(bdb->sinks, bap_pac_free);
 	queue_destroy(bdb->sources, bap_pac_free);
-	queue_destroy(bdb->endpoints, free);
 	gatt_db_unref(bdb->db);
 
 	free(bdb->pacs);
@@ -2565,6 +2600,8 @@ static void bap_free(void *data)
 {
 	struct bt_bap *bap = data;
 
+	timeout_remove(bap->process_id);
+
 	bt_bap_detach(bap);
 
 	bap_db_free(bap->rdb);
@@ -2572,9 +2609,10 @@ static void bap_free(void *data)
 	queue_destroy(bap->pac_cbs, pac_changed_free);
 	queue_destroy(bap->ready_cbs, bap_ready_free);
 	queue_destroy(bap->state_cbs, bap_state_free);
+	queue_destroy(bap->local_eps, free);
+	queue_destroy(bap->remote_eps, free);
 
 	queue_destroy(bap->reqs, bap_req_free);
-	queue_destroy(bap->pending, NULL);
 	queue_destroy(bap->notify, NULL);
 	queue_destroy(bap->streams, bap_stream_free);
 
@@ -2648,12 +2686,12 @@ struct bt_bap *bt_bap_new(struct gatt_db *ldb, struct gatt_db *rdb)
 	bap = new0(struct bt_bap, 1);
 	bap->ldb = bdb;
 	bap->reqs = queue_new();
-	bap->pending = queue_new();
 	bap->notify = queue_new();
 	bap->pac_cbs = queue_new();
 	bap->ready_cbs = queue_new();
 	bap->streams = queue_new();
 	bap->state_cbs = queue_new();
+	bap->local_eps = queue_new();
 
 	if (!rdb)
 		goto done;
@@ -2662,9 +2700,9 @@ struct bt_bap *bt_bap_new(struct gatt_db *ldb, struct gatt_db *rdb)
 	bdb->db = gatt_db_ref(rdb);
 	bdb->sinks = queue_new();
 	bdb->sources = queue_new();
-	bdb->endpoints = queue_new();
 
 	bap->rdb = bdb;
+	bap->remote_eps = queue_new();
 
 done:
 	return bt_bap_ref(bap);
@@ -2709,14 +2747,6 @@ struct bt_bap *bt_bap_ref(struct bt_bap *bap)
 	return bap;
 }
 
-static struct bt_bap *bt_bap_ref_safe(struct bt_bap *bap)
-{
-	if (!bap || !bap->ref_count)
-		return NULL;
-
-	return bt_bap_ref(bap);
-}
-
 void bt_bap_unref(struct bt_bap *bap)
 {
 	if (!bap)
@@ -2731,9 +2761,6 @@ void bt_bap_unref(struct bt_bap *bap)
 static void bap_notify_ready(struct bt_bap *bap)
 {
 	const struct queue_entry *entry;
-
-	if (!queue_isempty(bap->pending))
-		return;
 
 	if (!bt_bap_ref_safe(bap))
 		return;
@@ -2832,10 +2859,12 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 	}
 }
 
-static void read_source_pac(struct bt_bap *bap, bool success, uint8_t att_ecode,
+static void read_source_pac(bool success, uint8_t att_ecode,
 				const uint8_t *value, uint16_t length,
 				void *user_data)
 {
+	struct bt_bap *bap = user_data;
+
 	if (!success) {
 		DBG(bap, "Unable to read Source PAC: error 0x%02x", att_ecode);
 		return;
@@ -2844,10 +2873,12 @@ static void read_source_pac(struct bt_bap *bap, bool success, uint8_t att_ecode,
 	bap_parse_pacs(bap, BT_BAP_SOURCE, bap->rdb->sources, value, length);
 }
 
-static void read_sink_pac(struct bt_bap *bap, bool success, uint8_t att_ecode,
+static void read_sink_pac(bool success, uint8_t att_ecode,
 				const uint8_t *value, uint16_t length,
 				void *user_data)
 {
+	struct bt_bap *bap = user_data;
+
 	if (!success) {
 		DBG(bap, "Unable to read Sink PAC: error 0x%02x", att_ecode);
 		return;
@@ -2856,54 +2887,11 @@ static void read_sink_pac(struct bt_bap *bap, bool success, uint8_t att_ecode,
 	bap_parse_pacs(bap, BT_BAP_SINK, bap->rdb->sinks, value, length);
 }
 
-static void bap_pending_destroy(void *data)
+static void read_source_pac_loc(bool success, uint8_t att_ecode,
+					const uint8_t *value, uint16_t length,
+					void *user_data)
 {
-	struct bt_bap_pending *pending = data;
-	struct bt_bap *bap = pending->bap;
-
-	if (queue_remove_if(bap->pending, NULL, pending))
-		free(pending);
-
-	bap_notify_ready(bap);
-}
-
-static void bap_pending_complete(bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
-{
-	struct bt_bap_pending *pending = user_data;
-
-	if (pending->func)
-		pending->func(pending->bap, success, att_ecode, value, length,
-						pending->user_data);
-}
-
-static void bap_read_value(struct bt_bap *bap, uint16_t value_handle,
-				bap_func_t func, void *user_data)
-{
-	struct bt_bap_pending *pending;
-
-	pending = new0(struct bt_bap_pending, 1);
-	pending->bap = bap;
-	pending->func = func;
-	pending->user_data = user_data;
-
-	pending->id = bt_gatt_client_read_value(bap->client, value_handle,
-						bap_pending_complete, pending,
-						bap_pending_destroy);
-	if (!pending->id) {
-		DBG(bap, "Unable to send Read request");
-		free(pending);
-		return;
-	}
-
-	queue_push_tail(bap->pending, pending);
-}
-
-static void read_source_pac_loc(struct bt_bap *bap, bool success,
-				uint8_t att_ecode, const uint8_t *value,
-				uint16_t length, void *user_data)
-{
+	struct bt_bap *bap = user_data;
 	struct bt_pacs *pacs = bap_get_pacs(bap);
 
 	if (!success) {
@@ -2911,6 +2899,13 @@ static void read_source_pac_loc(struct bt_bap *bap, bool success,
 								att_ecode);
 		return;
 	}
+
+	if (length != sizeof(uint32_t)) {
+		DBG(bap, "Invalid Source PAC Location size: %d", length);
+		return;
+	}
+
+	pacs->source_loc_value = get_le32(value);
 
 	gatt_db_attribute_write(pacs->source_loc, 0, value, length, 0, NULL,
 							NULL, NULL);
@@ -2922,14 +2917,17 @@ static void read_source_pac_loc(struct bt_bap *bap, bool success,
 		if (gatt_db_attribute_get_char_data(pacs->source,
 						NULL, &value_handle,
 						NULL, NULL, NULL))
-			bap_read_value(bap, value_handle, read_source_pac, bap);
+			bt_gatt_client_read_value(bap->client, value_handle,
+							read_source_pac, bap,
+							NULL);
 	}
 }
 
-static void read_sink_pac_loc(struct bt_bap *bap, bool success,
-				uint8_t att_ecode, const uint8_t *value,
-				uint16_t length, void *user_data)
+static void read_sink_pac_loc(bool success, uint8_t att_ecode,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
 {
+	struct bt_bap *bap = user_data;
 	struct bt_pacs *pacs = bap_get_pacs(bap);
 
 	if (!success) {
@@ -2937,6 +2935,13 @@ static void read_sink_pac_loc(struct bt_bap *bap, bool success,
 								att_ecode);
 		return;
 	}
+
+	if (length != sizeof(uint32_t)) {
+		DBG(bap, "Invalid Sink PAC Location size: %d", length);
+		return;
+	}
+
+	pacs->sink_loc_value = get_le32(value);
 
 	gatt_db_attribute_write(pacs->sink_loc, 0, value, length, 0, NULL,
 							NULL, NULL);
@@ -2948,36 +2953,58 @@ static void read_sink_pac_loc(struct bt_bap *bap, bool success,
 		if (gatt_db_attribute_get_char_data(pacs->sink,
 						NULL, &value_handle,
 						NULL, NULL, NULL))
-			bap_read_value(bap, value_handle, read_sink_pac, bap);
+			bt_gatt_client_read_value(bap->client, value_handle,
+							read_sink_pac, bap,
+							NULL);
 	}
 }
 
-static void read_pac_context(struct bt_bap *bap, bool success,
-				uint8_t att_ecode, const uint8_t *value,
-				uint16_t length, void *user_data)
+static void read_pac_context(bool success, uint8_t att_ecode,
+				const uint8_t *value, uint16_t length,
+				void *user_data)
 {
+	struct bt_bap *bap = user_data;
 	struct bt_pacs *pacs = bap_get_pacs(bap);
+	const struct bt_pacs_context *ctx = (void *)value;
 
 	if (!success) {
 		DBG(bap, "Unable to read PAC Context: error 0x%02x", att_ecode);
 		return;
 	}
 
+	if (length != sizeof(*ctx)) {
+		DBG(bap, "Invalid PAC Context size: %d", length);
+		return;
+	}
+
+	pacs->sink_context_value = le16_to_cpu(ctx->snk);
+	pacs->source_context_value = le16_to_cpu(ctx->src);
+
 	gatt_db_attribute_write(pacs->context, 0, value, length, 0, NULL,
 							NULL, NULL);
 }
 
-static void read_pac_supported_context(struct bt_bap *bap, bool success,
-					uint8_t att_ecode, const uint8_t *value,
-					uint16_t length, void *user_data)
+static void read_pac_supported_context(bool success, uint8_t att_ecode,
+					const uint8_t *value, uint16_t length,
+					void *user_data)
 {
+	struct bt_bap *bap = user_data;
 	struct bt_pacs *pacs = bap_get_pacs(bap);
+	const struct bt_pacs_context *ctx = (void *)value;
 
 	if (!success) {
 		DBG(bap, "Unable to read PAC Supproted Context: error 0x%02x",
 								att_ecode);
 		return;
 	}
+
+	if (length != sizeof(*ctx)) {
+		DBG(bap, "Invalid PAC Supported Context size: %d", length);
+		return;
+	}
+
+	pacs->supported_sink_context_value = le16_to_cpu(ctx->snk);
+	pacs->supported_source_context_value = le16_to_cpu(ctx->src);
 
 	gatt_db_attribute_write(pacs->supported_context, 0, value, length, 0,
 							NULL, NULL, NULL);
@@ -3012,7 +3039,8 @@ static void foreach_pacs_char(struct gatt_db_attribute *attr, void *user_data)
 		if (!pacs->sink)
 			pacs->sink = attr;
 
-		bap_read_value(bap, value_handle, read_sink_pac, bap);
+		bt_gatt_client_read_value(bap->client, value_handle,
+						read_sink_pac, bap, NULL);
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_source)) {
@@ -3025,7 +3053,8 @@ static void foreach_pacs_char(struct gatt_db_attribute *attr, void *user_data)
 		if (!pacs->source)
 			pacs->source = attr;
 
-		bap_read_value(bap, value_handle, read_source_pac, NULL);
+		bt_gatt_client_read_value(bap->client, value_handle,
+						read_source_pac, bap, NULL);
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_sink_loc)) {
@@ -3037,7 +3066,8 @@ static void foreach_pacs_char(struct gatt_db_attribute *attr, void *user_data)
 			return;
 
 		pacs->sink_loc = attr;
-		bap_read_value(bap, value_handle, read_sink_pac_loc, NULL);
+		bt_gatt_client_read_value(bap->client, value_handle,
+						read_sink_pac_loc, bap, NULL);
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_source_loc)) {
@@ -3049,7 +3079,8 @@ static void foreach_pacs_char(struct gatt_db_attribute *attr, void *user_data)
 			return;
 
 		pacs->source_loc = attr;
-		bap_read_value(bap, value_handle, read_source_pac_loc, NULL);
+		bt_gatt_client_read_value(bap->client, value_handle,
+						read_source_pac_loc, bap, NULL);
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_context)) {
@@ -3060,7 +3091,8 @@ static void foreach_pacs_char(struct gatt_db_attribute *attr, void *user_data)
 			return;
 
 		pacs->context = attr;
-		bap_read_value(bap, value_handle, read_pac_context, NULL);
+		bt_gatt_client_read_value(bap->client, value_handle,
+						read_pac_context, bap, NULL);
 	}
 
 	if (!bt_uuid_cmp(&uuid, &uuid_supported_context)) {
@@ -3072,8 +3104,9 @@ static void foreach_pacs_char(struct gatt_db_attribute *attr, void *user_data)
 			return;
 
 		pacs->supported_context = attr;
-		bap_read_value(bap, value_handle, read_pac_supported_context,
-									NULL);
+		bt_gatt_client_read_value(bap->client, value_handle,
+						read_pac_supported_context,
+						bap, NULL);
 	}
 }
 
@@ -3321,14 +3354,17 @@ static void bap_ep_set_status(struct bt_bap *bap, struct bt_bap_endpoint *ep,
 	bap_stream_state_changed(ep->stream);
 }
 
-static void read_ase_status(struct bt_bap *bap, bool success, uint8_t att_ecode,
+static void read_ase_status(bool success, uint8_t att_ecode,
 				const uint8_t *value, uint16_t length,
 				void *user_data)
 {
 	struct bt_bap_endpoint *ep = user_data;
+	struct bt_bap *bap = ep->bap;
 
-	if (!success)
+	if (!success) {
+		DBG(bap, "ASE read status failed: 0x%04x", att_ecode);
 		return;
+	}
 
 	bap_ep_set_status(bap, ep, value, length);
 }
@@ -3406,7 +3442,10 @@ static void bap_endpoint_attach(struct bt_bap *bap, struct bt_bap_endpoint *ep)
 
 	DBG(bap, "ASE handle 0x%04x", value_handle);
 
-	bap_read_value(bap, value_handle, read_ase_status, ep);
+	ep->bap = bap;
+
+	bt_gatt_client_read_value(bap->client, value_handle, read_ase_status,
+					ep, NULL);
 
 	ep->state_id = bap_register_notify(bap, value_handle,
 						bap_endpoint_notify, ep);
@@ -3423,26 +3462,43 @@ static void append_group(void *data, void *user_data)
 					req->iov[i].iov_base);
 }
 
+static uint16_t bap_req_len(struct bt_bap_req *req)
+{
+	uint16_t len = 0;
+	size_t i;
+	const struct queue_entry *e;
+
+	for (i = 0; i < req->len; i++)
+		len += req->iov[i].iov_len;
+
+	e = queue_get_entries(req->group);
+	for (; e; e = e->next)
+		len += bap_req_len(e->data);
+
+	return len;
+}
+
 static bool bap_send(struct bt_bap *bap, struct bt_bap_req *req)
 {
 	struct bt_ascs *ascs = bap_get_ascs(bap);
 	int ret;
 	uint16_t handle;
-	uint8_t buf[64];
 	struct bt_ascs_ase_hdr hdr;
-	struct iovec iov  = {
-		.iov_base = buf,
-		.iov_len = 0,
-	};
+	struct iovec iov;
 	size_t i;
 
-	DBG(bap, "req %p", req);
+	iov.iov_len = sizeof(hdr) + bap_req_len(req);
+
+	DBG(bap, "req %p len %u", req, iov.iov_len);
 
 	if (!gatt_db_attribute_get_char_data(ascs->ase_cp, NULL, &handle,
 						NULL, NULL, NULL)) {
 		DBG(bap, "Unable to find Control Point");
 		return false;
 	}
+
+	iov.iov_base = alloca(iov.iov_len);
+	iov.iov_len = 0;
 
 	hdr.op = req->op;
 	hdr.num = 1 + queue_length(req->group);
@@ -3529,9 +3585,19 @@ static bool bap_queue_req(struct bt_bap *bap, struct bt_bap_req *req)
 {
 	struct bt_bap_req *pend;
 	struct queue *queue;
+	struct bt_att *att = bt_bap_get_att(bap);
+	uint16_t mtu = bt_att_get_mtu(att);
+	uint16_t len = 2 + bap_req_len(req);
+
+	if (len > mtu) {
+		DBG(bap, "Unable to queue request: req len %u > %u mtu", len,
+									mtu);
+		return false;
+	}
 
 	pend = queue_find(bap->reqs, match_req, req);
-	if (pend) {
+	/* Check if req can be grouped together and it fits in the MTU */
+	if (pend && (bap_req_len(pend) + len < mtu)) {
 		if (!pend->group)
 			pend->group = queue_new();
 		/* Group requests with the same opcode */
@@ -3641,7 +3707,7 @@ static void foreach_ascs_char(struct gatt_db_attribute *attr, void *user_data)
 			!bt_uuid_cmp(&uuid, &uuid_source)) {
 		struct bt_bap_endpoint *ep;
 
-		ep = bap_get_endpoint(bap->rdb, attr);
+		ep = bap_get_endpoint(bap->remote_eps, bap->rdb, attr);
 		if (!ep)
 			return;
 
@@ -3704,6 +3770,15 @@ static void bap_attach_att(struct bt_bap *bap, struct bt_att *att)
 							bap, NULL);
 }
 
+static void bap_idle(void *data)
+{
+	struct bt_bap *bap = data;
+
+	bap->idle_id = 0;
+
+	bap_notify_ready(bap);
+}
+
 bool bt_bap_attach(struct bt_bap *bap, struct bt_gatt_client *client)
 {
 	bt_uuid_t uuid;
@@ -3739,6 +3814,9 @@ clone:
 
 	bap_attach_att(bap, bt_gatt_client_get_att(client));
 
+	bap->idle_id = bt_gatt_client_idle_register(bap->client, bap_idle,
+								bap, NULL);
+
 	if (bap->rdb->pacs) {
 		uint16_t value_handle;
 		struct bt_pacs *pacs = bap->rdb->pacs;
@@ -3748,8 +3826,10 @@ clone:
 			if (gatt_db_attribute_get_char_data(pacs->sink,
 							NULL, &value_handle,
 							NULL, NULL, NULL)) {
-				bap_read_value(bap, value_handle,
-							read_sink_pac, bap);
+				bt_gatt_client_read_value(bap->client,
+							value_handle,
+							read_sink_pac,
+							bap, NULL);
 			}
 		}
 
@@ -3758,16 +3838,16 @@ clone:
 			if (gatt_db_attribute_get_char_data(pacs->source,
 							NULL, &value_handle,
 							NULL, NULL, NULL)) {
-				bap_read_value(bap, value_handle,
-							read_source_pac, bap);
+				bt_gatt_client_read_value(bap->client,
+							value_handle,
+							read_source_pac,
+							bap, NULL);
 			}
 		}
 
-		queue_foreach(bap->rdb->endpoints, bap_endpoint_foreach, bap);
+		queue_foreach(bap->remote_eps, bap_endpoint_foreach, bap);
 
 		bap_cp_attach(bap);
-
-		bap_notify_ready(bap);
 
 		return true;
 	}
@@ -3788,12 +3868,30 @@ static void stream_foreach_detach(void *data, void *user_data)
 	stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
 }
 
+static void bap_req_detach(void *data)
+{
+	struct bt_bap_req *req = data;
+
+	bap_req_complete(req, NULL);
+}
+
 void bt_bap_detach(struct bt_bap *bap)
 {
 	DBG(bap, "%p", bap);
 
 	if (!queue_remove(sessions, bap))
 		return;
+
+	/* Cancel ongoing request */
+	if (bap->req) {
+		bap_req_detach(bap->req);
+		bap->req = NULL;
+	}
+
+	bt_gatt_client_idle_unregister(bap->client, bap->idle_id);
+
+	/* Cancel queued requests */
+	queue_remove_all(bap->reqs, NULL, NULL, bap_req_detach);
 
 	bt_gatt_client_unref(bap->client);
 	bap->client = NULL;
@@ -4150,20 +4248,17 @@ int bt_bap_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	return 0;
 }
 
-struct bt_bap_stream *bt_bap_config(struct bt_bap *bap,
+struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 					struct bt_bap_pac *lpac,
 					struct bt_bap_pac *rpac,
 					struct bt_bap_qos *pqos,
-					struct iovec *data,
-					bt_bap_stream_func_t func,
-					void *user_data)
+					struct iovec *data)
 {
 	struct bt_bap_stream *stream;
 	struct bt_bap_endpoint *ep;
 	struct match_pac match;
-	int id;
 
-	if (!bap || !bap->rdb || queue_isempty(bap->rdb->endpoints))
+	if (!bap || !bap->rdb || queue_isempty(bap->remote_eps))
 		return NULL;
 
 	if (lpac && rpac) {
@@ -4204,10 +4299,10 @@ struct bt_bap_stream *bt_bap_config(struct bt_bap *bap,
 	match.rpac = rpac;
 
 	/* Check for existing stream */
-	ep = queue_find(bap->rdb->endpoints, find_ep_pacs, &match);
+	ep = queue_find(bap->remote_eps, find_ep_pacs, &match);
 	if (!ep) {
 		/* Check for unused ASE */
-		ep = queue_find(bap->rdb->endpoints, find_ep_unused, &match);
+		ep = queue_find(bap->remote_eps, find_ep_unused, &match);
 		if (!ep) {
 			DBG(bap, "Unable to find unused ASE");
 			return NULL;
@@ -4217,15 +4312,6 @@ struct bt_bap_stream *bt_bap_config(struct bt_bap *bap,
 	stream = ep->stream;
 	if (!stream)
 		stream = bap_stream_new(bap, ep, lpac, rpac, data, true);
-
-	id = bt_bap_stream_config(stream, pqos, data, func, user_data);
-	if (!id) {
-		DBG(bap, "Unable to config stream");
-		queue_remove(bap->streams, stream);
-		ep->stream = NULL;
-		free(stream);
-		return NULL;
-	}
 
 	return stream;
 }
@@ -4535,6 +4621,7 @@ unsigned int bt_bap_stream_release(struct bt_bap_stream *stream,
 	struct iovec iov;
 	struct bt_ascs_release rel;
 	struct bt_bap_req *req;
+	struct bt_bap *bap;
 
 	if (!stream)
 		return 0;
@@ -4551,9 +4638,17 @@ unsigned int bt_bap_stream_release(struct bt_bap_stream *stream,
 	iov.iov_base = &rel;
 	iov.iov_len = sizeof(rel);
 
+	bap = stream->bap;
+
+	/* If stream does not belong to a client session, clean it up now */
+	if (!bap_stream_valid(stream)) {
+		stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
+		stream = NULL;
+	}
+
 	req = bap_req_new(stream, BT_ASCS_RELEASE, &iov, 1, func, user_data);
 
-	if (!bap_queue_req(stream->bap, req)) {
+	if (!bap_queue_req(bap, req)) {
 		bap_req_free(req);
 		return 0;
 	}
@@ -4571,14 +4666,17 @@ uint8_t bt_bap_stream_get_dir(struct bt_bap_stream *stream)
 
 uint32_t bt_bap_stream_get_location(struct bt_bap_stream *stream)
 {
-	struct bt_bap_pac *pac;
+	struct bt_pacs *pacs;
 
 	if (!stream)
 		return 0x00000000;
 
-	pac = stream->rpac ? stream->rpac : stream->lpac;
+	pacs = stream->client ? stream->bap->rdb->pacs : stream->bap->ldb->pacs;
 
-	return pac->locations;
+	if (stream->ep->dir == BT_BAP_SOURCE)
+		return pacs->source_loc_value;
+	else
+		return pacs->sink_loc_value;
 }
 
 struct iovec *bt_bap_stream_get_config(struct bt_bap_stream *stream)

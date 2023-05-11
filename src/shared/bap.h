@@ -26,7 +26,7 @@
 #define BT_BAP_STREAM_STATE_RELEASING	0x06
 
 #define BT_BAP_CONFIG_LATENCY_LOW	0x01
-#define BT_BAP_CONFIG_LATENCY_BALACED	0x02
+#define BT_BAP_CONFIG_LATENCY_BALANCED	0x02
 #define BT_BAP_CONFIG_LATENCY_HIGH	0x03
 
 #define BT_BAP_CONFIG_PHY_1M		0x01
@@ -128,6 +128,8 @@ bool bt_bap_remove_pac(struct bt_bap_pac *pac);
 
 uint8_t bt_bap_pac_get_type(struct bt_bap_pac *pac);
 
+uint32_t bt_bap_pac_get_locations(struct bt_bap_pac *pac);
+
 struct bt_bap_stream *bt_bap_pac_get_stream(struct bt_bap_pac *pac);
 
 /* Session related function */
@@ -190,13 +192,11 @@ void *bt_bap_pac_get_user_data(struct bt_bap_pac *pac);
 int bt_bap_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 			bt_bap_pac_select_t func, void *user_data);
 
-struct bt_bap_stream *bt_bap_config(struct bt_bap *bap,
+struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 					struct bt_bap_pac *lpac,
 					struct bt_bap_pac *rpac,
 					struct bt_bap_qos *pqos,
-					struct iovec *data,
-					bt_bap_stream_func_t func,
-					void *user_data);
+					struct iovec *data);
 
 struct bt_bap *bt_bap_stream_get_session(struct bt_bap_stream *stream);
 uint8_t bt_bap_stream_get_state(struct bt_bap_stream *stream);

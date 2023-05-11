@@ -35,8 +35,8 @@ struct mesh_io_private {
 	struct mesh_io *io;
 	void *user_data;
 	struct l_timeout *tx_timeout;
+	struct l_timeout *dup_timeout;
 	struct l_queue *dup_filters;
-	struct l_queue *rx_regs;
 	struct l_queue *tx_pkts;
 	struct tx_pkt *tx;
 	unsigned int tx_id;
@@ -46,13 +46,6 @@ struct mesh_io_private {
 	uint8_t handle;
 	bool sending;
 	bool active;
-};
-
-struct pvt_rx_reg {
-	mesh_io_recv_func_t cb;
-	void *user_data;
-	uint8_t len;
-	uint8_t filter[0];
 };
 
 struct process_data {
@@ -82,6 +75,8 @@ struct dup_filter {
 	uint8_t addr[6];
 } __packed;
 
+static const uint8_t zero_addr[] = {0, 0, 0, 0, 0, 0};
+
 static struct mesh_io_private *pvt;
 
 static uint32_t get_instant(void)
@@ -110,6 +105,14 @@ static bool find_by_addr(const void *a, const void *b)
 	return !memcmp(filter->addr, b, 6);
 }
 
+static bool find_by_adv(const void *a, const void *b)
+{
+	const struct dup_filter *filter = a;
+	uint64_t data = l_get_be64(b);
+
+	return !memcmp(filter->addr, zero_addr, 6) && filter->data == data;
+}
+
 static void filter_timeout(struct l_timeout *timeout, void *user_data)
 {
 	struct dup_filter *filter;
@@ -136,6 +139,7 @@ static void filter_timeout(struct l_timeout *timeout, void *user_data)
 
 done:
 	l_timeout_remove(timeout);
+	pvt->dup_timeout = NULL;
 }
 
 /* Ignore consequtive duplicate advertisements within timeout period */
@@ -146,7 +150,22 @@ static bool filter_dups(const uint8_t *addr, const uint8_t *adv,
 	uint32_t instant_delta;
 	uint64_t data = l_get_be64(adv);
 
-	filter = l_queue_remove_if(pvt->dup_filters, find_by_addr, addr);
+	if (!addr)
+		addr = zero_addr;
+
+	if (adv[1] == MESH_AD_TYPE_PROVISION) {
+		filter = l_queue_find(pvt->dup_filters, find_by_adv, adv);
+
+		if (!filter && addr != zero_addr)
+			return false;
+
+		l_queue_remove(pvt->dup_filters, filter);
+
+	} else {
+		filter = l_queue_remove_if(pvt->dup_filters, find_by_addr,
+									addr);
+	}
+
 	if (!filter) {
 		filter = l_new(struct dup_filter, 1);
 		memcpy(filter->addr, addr, 6);
@@ -154,7 +173,8 @@ static bool filter_dups(const uint8_t *addr, const uint8_t *adv,
 
 	/* Start filter expiration timer */
 	if (!l_queue_length(pvt->dup_filters))
-		l_timeout_create(1, filter_timeout, NULL, NULL);
+		pvt->dup_timeout = l_timeout_create(1, filter_timeout, NULL,
+									NULL);
 
 	l_queue_push_head(pvt->dup_filters, filter);
 	instant_delta = instant - filter->instant;
@@ -170,14 +190,14 @@ static bool filter_dups(const uint8_t *addr, const uint8_t *adv,
 
 static void process_rx_callbacks(void *v_reg, void *v_rx)
 {
-	struct pvt_rx_reg *rx_reg = v_reg;
+	struct mesh_io_reg *rx_reg = v_reg;
 	struct process_data *rx = v_rx;
 
 	if (!memcmp(rx->data, rx_reg->filter, rx_reg->len))
 		rx_reg->cb(rx_reg->user_data, &rx->info, rx->data, rx->len);
 }
 
-static void process_rx(struct mesh_io_private *pvt, int8_t rssi,
+static void process_rx(uint16_t index, struct mesh_io_private *pvt, int8_t rssi,
 					uint32_t instant, const uint8_t *addr,
 					const uint8_t *data, uint8_t len)
 {
@@ -191,21 +211,25 @@ static void process_rx(struct mesh_io_private *pvt, int8_t rssi,
 		.info.rssi = rssi,
 	};
 
+	/* Accept all traffic except beacons from any controller */
+	if (index != pvt->send_idx && data[0] == MESH_AD_TYPE_BEACON)
+		return;
+
 	print_packet("RX", data, len);
-	l_queue_foreach(pvt->rx_regs, process_rx_callbacks, &rx);
+	l_queue_foreach(pvt->io->rx_regs, process_rx_callbacks, &rx);
 }
 
 static void send_cmplt(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
-	print_packet("Mesh Send Complete", param, length);
+	/* print_packet("Mesh Send Complete", param, length); */
 }
 
 static void event_device_found(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_ev_mesh_device_found *ev = param;
-	struct mesh_io *io = user_data;
+	struct mesh_io_private *pvt = user_data;
 	const uint8_t *adv;
 	const uint8_t *addr;
 	uint32_t instant;
@@ -236,9 +260,10 @@ static void event_device_found(uint16_t index, uint16_t length,
 		if (len > adv_len)
 			break;
 
-		if (adv[1] >= 0x29 && adv[1] <= 0x2B)
-			process_rx(io->pvt, ev->rssi, instant, addr, adv + 1,
-								adv[0]);
+		if (adv[1] >= MESH_AD_TYPE_PROVISION &&
+					adv[1] <= MESH_AD_TYPE_BEACON)
+			process_rx(index, pvt, ev->rssi, instant, addr,
+							adv + 1, adv[0]);
 
 		adv += field_len + 1;
 	}
@@ -270,7 +295,7 @@ static bool find_by_pattern(const void *a, const void *b)
 
 static bool find_active(const void *a, const void *b)
 {
-	const struct pvt_rx_reg *rx_reg = a;
+	const struct mesh_io_reg *rx_reg = a;
 
 	/* Mesh specific AD types do *not* require active scanning,
 	 * so do not turn on Active Scanning on their account.
@@ -319,6 +344,12 @@ static void ctl_up(uint8_t status, uint16_t length,
 	mesh->period = L_CPU_TO_LE16(0x1000);
 	mesh->num_ad_types = sizeof(mesh_ad_types);
 	memcpy(mesh->ad_types, mesh_ad_types, sizeof(mesh_ad_types));
+
+	pvt->rx_id = mesh_mgmt_register(MGMT_EV_MESH_DEVICE_FOUND,
+				MGMT_INDEX_NONE, event_device_found, pvt,
+				NULL);
+	pvt->tx_id = mesh_mgmt_register(MGMT_EV_MESH_PACKET_CMPLT,
+					index, send_cmplt, pvt, NULL);
 
 	mesh_mgmt_send(MGMT_OP_SET_MESH_RECEIVER, index, len, mesh,
 			mesh_up, L_UINT_TO_PTR(index), NULL);
@@ -407,13 +438,7 @@ static bool dev_init(struct mesh_io *io, void *opts, void *user_data)
 	mesh_mgmt_send(MGMT_OP_READ_INFO, index, 0, NULL,
 				read_info_cb, L_UINT_TO_PTR(index), NULL);
 
-	pvt->rx_id = mesh_mgmt_register(MGMT_EV_MESH_DEVICE_FOUND,
-				MGMT_INDEX_NONE, event_device_found, io, NULL);
-	pvt->tx_id = mesh_mgmt_register(MGMT_EV_MESH_PACKET_CMPLT,
-					MGMT_INDEX_NONE, send_cmplt, io, NULL);
-
 	pvt->dup_filters = l_queue_new();
-	pvt->rx_regs = l_queue_new();
 	pvt->tx_pkts = l_queue_new();
 
 	pvt->io = io;
@@ -421,14 +446,6 @@ static bool dev_init(struct mesh_io *io, void *opts, void *user_data)
 
 	return true;
 }
-
-static void free_rx_reg(void *user_data)
-{
-	struct pvt_rx_reg *rx_reg = user_data;
-
-	l_free(rx_reg);
-}
-
 
 static bool dev_destroy(struct mesh_io *io)
 {
@@ -443,8 +460,8 @@ static bool dev_destroy(struct mesh_io *io)
 	mesh_mgmt_unregister(pvt->rx_id);
 	mesh_mgmt_unregister(pvt->tx_id);
 	l_timeout_remove(pvt->tx_timeout);
+	l_timeout_remove(pvt->dup_timeout);
 	l_queue_destroy(pvt->dup_filters, l_free);
-	l_queue_destroy(pvt->rx_regs, free_rx_reg);
 	l_queue_destroy(pvt->tx_pkts, l_free);
 	io->pvt = NULL;
 	l_free(pvt);
@@ -475,7 +492,7 @@ static void send_cancel(struct mesh_io_private *pvt)
 
 	if (pvt->handle) {
 		remove.handle = pvt->handle;
-		l_debug("Cancel TX");
+		/* l_debug("Cancel TX"); */
 		mesh_mgmt_send(MGMT_OP_MESH_SEND_CANCEL, pvt->send_idx,
 						sizeof(remove), &remove,
 						NULL, NULL, NULL);
@@ -522,9 +539,14 @@ static void send_pkt(struct mesh_io_private *pvt, struct tx_pkt *tx,
 	send->adv_data_len = tx->len + 1;
 	send->adv_data[0] = tx->len;
 	memcpy(send->adv_data + 1, tx->pkt, tx->len);
+
+	/* Filter looped back Provision packets */
+	if (tx->pkt[0] == MESH_AD_TYPE_PROVISION)
+		filter_dups(NULL, send->adv_data, get_instant());
+
 	mesh_mgmt_send(MGMT_OP_MESH_SEND, index,
 			len, send, send_queued, tx, NULL);
-	print_packet("Mesh Send Start", tx->pkt, tx->len);
+	/* print_packet("Mesh Send Start", tx->pkt, tx->len); */
 	pvt->tx = tx;
 }
 
@@ -711,37 +733,16 @@ static bool tx_cancel(struct mesh_io *io, const uint8_t *data, uint8_t len)
 	return true;
 }
 
-static bool find_by_filter(const void *a, const void *b)
-{
-	const struct pvt_rx_reg *rx_reg = a;
-	const uint8_t *filter = b;
-
-	return !memcmp(rx_reg->filter, filter, rx_reg->len);
-}
-
 static bool recv_register(struct mesh_io *io, const uint8_t *filter,
 			uint8_t len, mesh_io_recv_func_t cb, void *user_data)
 {
-	struct pvt_rx_reg *rx_reg;
 	bool active = false;
 
-	if (!cb || !filter || !len || io->pvt != pvt)
+	if (io->pvt != pvt)
 		return false;
 
-	rx_reg = l_queue_remove_if(pvt->rx_regs, find_by_filter, filter);
-
-	free_rx_reg(rx_reg);
-	rx_reg = l_malloc(sizeof(*rx_reg) + len);
-
-	memcpy(rx_reg->filter, filter, len);
-	rx_reg->len = len;
-	rx_reg->cb = cb;
-	rx_reg->user_data = user_data;
-
-	l_queue_push_head(pvt->rx_regs, rx_reg);
-
 	/* Look for any AD types requiring Active Scanning */
-	if (l_queue_find(pvt->rx_regs, find_active, NULL))
+	if (l_queue_find(io->rx_regs, find_active, NULL))
 		active = true;
 
 	if (pvt->active != active) {
@@ -755,18 +756,13 @@ static bool recv_register(struct mesh_io *io, const uint8_t *filter,
 static bool recv_deregister(struct mesh_io *io, const uint8_t *filter,
 								uint8_t len)
 {
-	struct pvt_rx_reg *rx_reg;
 	bool active = false;
 
 	if (io->pvt != pvt)
 		return false;
 
-	rx_reg = l_queue_remove_if(pvt->rx_regs, find_by_filter, filter);
-
-	free_rx_reg(rx_reg);
-
 	/* Look for any AD types requiring Active Scanning */
-	if (l_queue_find(pvt->rx_regs, find_active, NULL))
+	if (l_queue_find(io->rx_regs, find_active, NULL))
 		active = true;
 
 	if (active != pvt->active) {

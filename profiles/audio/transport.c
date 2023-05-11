@@ -84,13 +84,7 @@ struct bap_transport {
 	struct bt_bap_stream	*stream;
 	unsigned int		state_id;
 	bool			linked;
-	uint32_t		interval;
-	uint8_t			framing;
-	uint8_t			phy;
-	uint16_t		sdu;
-	uint8_t			rtn;
-	uint16_t		latency;
-	uint32_t		delay;
+	struct bt_bap_qos	qos;
 };
 
 struct media_transport {
@@ -116,6 +110,8 @@ struct media_transport {
 								guint id);
 	void			(*set_state) (struct media_transport *transport,
 						transport_state_t state);
+	void			*(*get_stream)
+					(struct media_transport *transport);
 	GDestroyNotify		destroy;
 	void			*data;
 };
@@ -738,15 +734,22 @@ static void set_volume(const GDBusPropertyTable *property,
 	uint16_t arg;
 	int8_t volume;
 	bool notify;
+	int err;
 
-	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16)
-		goto error;
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16) {
+		g_dbus_pending_property_error(id,
+				ERROR_INTERFACE ".InvalidArguments",
+				"Expected UINT16");
+		return;
+	}
 
 	dbus_message_iter_get_basic(iter, &arg);
-	if (arg > INT8_MAX)
-		goto error;
-
-	g_dbus_pending_property_success(id);
+	if (arg > INT8_MAX) {
+		g_dbus_pending_property_error(id,
+				ERROR_INTERFACE ".InvalidArguments",
+				"Volume must not be larger than 127");
+		return;
+	}
 
 	volume = (int8_t)arg;
 	if (a2dp->volume == volume)
@@ -761,12 +764,17 @@ static void set_volume(const GDBusPropertyTable *property,
 						"Volume");
 	}
 
-	avrcp_set_volume(transport->device, volume, notify);
-	return;
+	err = avrcp_set_volume(transport->device, volume, notify);
+	if (err) {
+		error("avrcp_set_volume returned %s (%d)", strerror(-err), err);
+		g_dbus_pending_property_error(id,
+				ERROR_INTERFACE ".Failed",
+				"Internal error %s (%d)",
+				strerror(-err), err);
+		return;
+	}
 
-error:
-	g_dbus_pending_property_error(id, ERROR_INTERFACE ".InvalidArguments",
-					"Invalid arguments in method call");
+	g_dbus_pending_property_success(id);
 }
 
 static gboolean endpoint_exists(const GDBusPropertyTable *property, void *data)
@@ -815,13 +823,46 @@ static const GDBusPropertyTable a2dp_properties[] = {
 	{ }
 };
 
+static gboolean qos_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+
+	return bap->qos.phy != 0x00;
+}
+
+static gboolean get_cig(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE,
+							&bap->qos.cig_id);
+
+	return TRUE;
+}
+
+static gboolean get_cis(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE,
+							&bap->qos.cis_id);
+
+	return TRUE;
+}
+
 static gboolean get_interval(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *data)
 {
 	struct media_transport *transport = data;
 	struct bap_transport *bap = transport->data;
 
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &bap->interval);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32,
+							&bap->qos.interval);
 
 	return TRUE;
 }
@@ -831,9 +872,20 @@ static gboolean get_framing(const GDBusPropertyTable *property,
 {
 	struct media_transport *transport = data;
 	struct bap_transport *bap = transport->data;
-	dbus_bool_t val = bap->framing;
+	dbus_bool_t val = bap->qos.framing;
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &val);
+
+	return TRUE;
+}
+
+static gboolean get_phy(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE, &bap->qos.phy);
 
 	return TRUE;
 }
@@ -844,7 +896,7 @@ static gboolean get_sdu(const GDBusPropertyTable *property,
 	struct media_transport *transport = data;
 	struct bap_transport *bap = transport->data;
 
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &bap->sdu);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &bap->qos.sdu);
 
 	return TRUE;
 }
@@ -855,7 +907,7 @@ static gboolean get_retransmissions(const GDBusPropertyTable *property,
 	struct media_transport *transport = data;
 	struct bap_transport *bap = transport->data;
 
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE, &bap->rtn);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE, &bap->qos.rtn);
 
 	return TRUE;
 }
@@ -866,7 +918,8 @@ static gboolean get_latency(const GDBusPropertyTable *property,
 	struct media_transport *transport = data;
 	struct bap_transport *bap = transport->data;
 
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &bap->latency);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16,
+							&bap->qos.latency);
 
 	return TRUE;
 }
@@ -877,7 +930,7 @@ static gboolean get_delay(const GDBusPropertyTable *property,
 	struct media_transport *transport = data;
 	struct bap_transport *bap = transport->data;
 
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &bap->delay);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &bap->qos.delay);
 
 	return TRUE;
 }
@@ -964,12 +1017,15 @@ static const GDBusPropertyTable bap_properties[] = {
 	{ "Codec", "y", get_codec },
 	{ "Configuration", "ay", get_configuration },
 	{ "State", "s", get_state },
-	{ "Interval", "u", get_interval },
-	{ "Framing", "b", get_framing },
-	{ "SDU", "q", get_sdu },
-	{ "Retransmissions", "y", get_retransmissions },
-	{ "Latency", "q", get_latency },
-	{ "Delay", "u", get_delay },
+	{ "CIG", "y", get_cig, NULL, qos_exists },
+	{ "CIS", "y", get_cis, NULL, qos_exists },
+	{ "Interval", "u", get_interval, NULL, qos_exists },
+	{ "Framing", "b", get_framing, NULL, qos_exists },
+	{ "PHY", "y", get_phy, NULL, qos_exists },
+	{ "SDU", "q", get_sdu, NULL, qos_exists },
+	{ "Retransmissions", "y", get_retransmissions, NULL, qos_exists },
+	{ "Latency", "q", get_latency, NULL, qos_exists },
+	{ "Delay", "u", get_delay, NULL, qos_exists },
 	{ "Endpoint", "o", get_endpoint, NULL, endpoint_exists },
 	{ "Location", "u", get_location },
 	{ "Metadata", "ay", get_metadata },
@@ -1181,10 +1237,52 @@ static void bap_update_links(const struct media_transport *transport)
 	DBG("stream %p linked %s", bap->stream, bap->linked ? "true" : "false");
 }
 
+static void bap_update_qos(const struct media_transport *transport)
+{
+	struct bap_transport *bap = transport->data;
+	struct bt_bap_qos *qos;
+
+	qos = bt_bap_stream_get_qos(bap->stream);
+
+	if (!memcmp(qos, &bap->qos, sizeof(struct bt_bap_qos)))
+		return;
+
+	bap->qos = *qos;
+
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"CIG");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"CIS");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"Interval");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"Framing");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"PHY");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"SDU");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"Retransmissions");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"Latency");
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"Delay");
+}
+
 static guint resume_bap(struct media_transport *transport,
 				struct media_owner *owner)
 {
 	struct bap_transport *bap = transport->data;
+	struct iovec *meta;
 	guint id;
 
 	if (!bap->stream)
@@ -1202,7 +1300,8 @@ static guint resume_bap(struct media_transport *transport,
 		return g_idle_add(resume_complete, transport);
 	}
 
-	id = bt_bap_stream_enable(bap->stream, bap->linked, NULL,
+	meta = bt_bap_stream_get_metadata(bap->stream);
+	id = bt_bap_stream_enable(bap->stream, bap->linked, meta,
 					bap_enable_complete, owner);
 	if (!id)
 		return 0;
@@ -1323,6 +1422,7 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 		if (owner && owner->pending)
 			return;
 		bap_update_links(transport);
+		bap_update_qos(transport);
 		transport_update_playing(transport, FALSE);
 		return;
 	case BT_BAP_STREAM_STATE_DISABLING:
@@ -1378,6 +1478,13 @@ static void bap_connecting(struct bt_bap_stream *stream, bool state, int fd,
 	bap_update_links(transport);
 }
 
+static void *get_stream_bap(struct media_transport *transport)
+{
+	struct bap_transport *bap = transport->data;
+
+	return bap->stream;
+}
+
 static void free_bap(void *data)
 {
 	struct bap_transport *bap = data;
@@ -1397,12 +1504,7 @@ static int media_transport_init_bap(struct media_transport *transport,
 
 	bap = new0(struct bap_transport, 1);
 	bap->stream = stream;
-	bap->interval = qos->interval;
-	bap->framing = qos->framing;
-	bap->phy = qos->phy;
-	bap->rtn = qos->rtn;
-	bap->latency = qos->latency;
-	bap->delay = qos->delay;
+	bap->qos = *qos;
 	bap->state_id = bt_bap_state_register(bt_bap_stream_get_session(stream),
 						bap_state_changed,
 						bap_connecting,
@@ -1413,6 +1515,7 @@ static int media_transport_init_bap(struct media_transport *transport,
 	transport->suspend = suspend_bap;
 	transport->cancel = cancel_bap;
 	transport->set_state = set_state_bap;
+	transport->get_stream = get_stream_bap;
 	transport->destroy = free_bap;
 
 	return 0;
@@ -1479,6 +1582,14 @@ fail:
 const char *media_transport_get_path(struct media_transport *transport)
 {
 	return transport->path;
+}
+
+void *media_transport_get_stream(struct media_transport *transport)
+{
+	if (transport->get_stream)
+		return transport->get_stream(transport);
+
+	return NULL;
 }
 
 void media_transport_update_delay(struct media_transport *transport,

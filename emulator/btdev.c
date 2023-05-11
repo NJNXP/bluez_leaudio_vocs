@@ -5,6 +5,7 @@
  *
  *  Copyright (C) 2011-2012  Intel Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -5885,6 +5886,7 @@ static void le_cis_estabilished(struct btdev *dev, struct btdev_conn *conn,
 
 	if (!evt.status) {
 		struct btdev *remote = conn->link->dev;
+		int i = conn->handle - ISO_HANDLE;
 
 		/* TODO: Figure out if these values makes sense */
 		memcpy(evt.cig_sync_delay, remote->le_cig.params.c_interval,
@@ -5895,15 +5897,15 @@ static void le_cis_estabilished(struct btdev *dev, struct btdev_conn *conn,
 				sizeof(remote->le_cig.params.c_interval));
 		memcpy(evt.p_latency, &remote->le_cig.params.p_interval,
 				sizeof(remote->le_cig.params.p_interval));
-		evt.c_phy = remote->le_cig.cis[0].c_phy;
-		evt.p_phy = remote->le_cig.cis[0].p_phy;
+		evt.c_phy = remote->le_cig.cis[i].c_phy;
+		evt.p_phy = remote->le_cig.cis[i].p_phy;
 		evt.nse = 0x01;
 		evt.c_bn = 0x01;
 		evt.p_bn = 0x01;
 		evt.c_ft = 0x01;
 		evt.p_ft = 0x01;
-		evt.c_mtu = remote->le_cig.cis[0].c_sdu;
-		evt.p_mtu = remote->le_cig.cis[0].p_sdu;
+		evt.c_mtu = remote->le_cig.cis[i].c_sdu;
+		evt.p_mtu = remote->le_cig.cis[i].p_sdu;
 		evt.interval = remote->le_cig.params.c_latency;
 	}
 
@@ -5948,7 +5950,7 @@ static int cmd_create_cis_complete(struct btdev *dev, const void *data,
 		evt.acl_handle = cpu_to_le16(acl->handle);
 		evt.cis_handle = cpu_to_le16(iso->handle);
 		evt.cig_id = iso->dev->le_cig.params.cig_id;
-		evt.cis_id = iso->dev->le_cig.cis[0].cis_id;
+		evt.cis_id = iso->dev->le_cig.cis[i].cis_id;
 
 		le_meta_event(iso->link->dev, BT_HCI_EVT_LE_CIS_REQ, &evt,
 					sizeof(evt));
@@ -6160,6 +6162,13 @@ static int cmd_big_create_sync_complete(struct btdev *dev, const void *data,
 
 	dev->big_handle = cmd->handle;
 	bis = conn->data;
+
+	if (bis->encryption != cmd->encryption) {
+		pdu.ev.status = BT_HCI_ERR_ENC_MODE_NOT_ACCEPTABLE;
+		le_meta_event(dev, BT_HCI_EVT_LE_BIG_SYNC_ESTABILISHED, &pdu,
+					sizeof(pdu.ev));
+		return 0;
+	}
 
 	pdu.ev.handle = cmd->handle;
 	memcpy(pdu.ev.latency, bis->sdu_interval, sizeof(pdu.ev.interval));

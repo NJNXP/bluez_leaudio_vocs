@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation.
+ *  Copyright 2023 NXP
  *
  */
 
@@ -42,13 +43,15 @@
 
 #define QOS_FULL(_cig, _cis, _in, _out) \
 { \
-	.cig = _cig, \
-	.cis = _cis, \
-	.sca = 0x07, \
-	.packing = 0x00, \
-	.framing = 0x00, \
-	.in = _in, \
-	.out = _out, \
+	.ucast = { \
+		.cig = _cig, \
+		.cis = _cis, \
+		.sca = 0x07, \
+		.packing = 0x00, \
+		.framing = 0x00, \
+		.in = _in, \
+		.out = _out, \
+	},\
 }
 
 #define QOS(_interval, _latency, _sdu, _phy, _rtn) \
@@ -66,6 +69,11 @@
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
 
+#define QOS_1_2(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x01, 0x02, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
 #define QOS_OUT(_interval, _latency, _sdu, _phy, _rtn) \
 	QOS_FULL(BT_ISO_QOS_CIG_UNSET, BT_ISO_QOS_CIS_UNSET, \
 		{}, QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
@@ -78,8 +86,21 @@
 	QOS_FULL(0x01, 0x01, \
 		{}, QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
 
+#define QOS_OUT_1_2(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x01, 0x02, \
+		{}, QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
 #define QOS_IN(_interval, _latency, _sdu, _phy, _rtn) \
 	QOS_FULL(BT_ISO_QOS_CIG_UNSET, BT_ISO_QOS_CIS_UNSET, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
+#define QOS_IN_1(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x01, BT_ISO_QOS_CIS_UNSET, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
+#define QOS_IN_1_1(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x01, 0x01, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
+#define QOS_IN_1_2(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x01, 0x02, \
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
 
 /* QoS Configuration settings for low latency audio data */
@@ -102,27 +123,157 @@
 #define QOS_48_5_1 QOS_OUT(7500, 15, 117, 0x02, 5)
 #define QOS_48_6_1 QOS_OUT(10000, 20, 155, 0x02, 5)
 /* QoS Configuration settings for high reliability audio data */
-#define QOS_8_1_2 QOS(7500, 45, 26, 0x02, 41)
-#define QOS_8_2_2 QOS(10000, 60, 30, 0x02, 53)
-#define QOS_16_1_2 QOS(7500, 45, 30, 0x02, 41)
-#define QOS_16_2_2 QOS(10000, 60, 40, 0x02, 47)
-#define QOS_24_1_2 QOS(7500, 45, 45, 0x02, 35)
-#define QOS_24_2_2 QOS(10000, 60, 60, 0x02, 41)
-#define QOS_32_1_2 QOS(7500, 45, 60, 0x02, 29)
-#define QOS_32_2_2 QOS(10000, 60, 80, 0x02, 35)
-#define QOS_44_1_2 QOS_OUT(8163, 54, 98, 0x02, 23)
-#define QOS_44_2_2 QOS_OUT(10884, 71, 130, 0x02, 23)
-#define QOS_48_1_2 QOS_OUT(7500, 45, 75, 0x02, 23)
-#define QOS_48_2_2 QOS_OUT(10000, 60, 100, 0x02, 23)
-#define QOS_48_3_2 QOS_OUT(7500, 45, 90, 0x02, 23)
-#define QOS_48_4_2 QOS_OUT(10000, 60, 120, 0x02, 23)
-#define QOS_48_5_2 QOS_OUT(7500, 45, 117, 0x02, 23)
-#define QOS_48_6_2 QOS_OUT(10000, 60, 155, 0x02, 23)
+#define QOS_8_1_2 QOS(7500, 75, 26, 0x02, 13)
+#define QOS_8_2_2 QOS(10000, 95, 30, 0x02, 13)
+#define QOS_16_1_2 QOS(7500, 75, 30, 0x02, 13)
+#define QOS_16_2_2 QOS(10000, 95, 40, 0x02, 13)
+#define QOS_24_1_2 QOS(7500, 75, 45, 0x02, 13)
+#define QOS_24_2_2 QOS(10000, 95, 60, 0x02, 13)
+#define QOS_32_1_2 QOS(7500, 65, 60, 0x02, 13)
+#define QOS_32_2_2 QOS(10000, 95, 80, 0x02, 13)
+#define QOS_44_1_2 QOS_OUT(8163, 80, 98, 0x02, 13)
+#define QOS_44_2_2 QOS_OUT(10884, 85, 130, 0x02, 13)
+#define QOS_48_1_2 QOS_OUT(7500, 75, 75, 0x02, 13)
+#define QOS_48_2_2 QOS_OUT(10000, 95, 100, 0x02, 13)
+#define QOS_48_3_2 QOS_OUT(7500, 75, 90, 0x02, 13)
+#define QOS_48_4_2 QOS_OUT(10000, 100, 120, 0x02, 13)
+#define QOS_48_5_2 QOS_OUT(7500, 75, 117, 0x02, 13)
+#define QOS_48_6_2 QOS_OUT(10000, 100, 155, 0x02, 13)
 
-#define QOS_OUT_16_2_1 QOS_OUT(10000, 10, 40, 0x02, 2)
-#define QOS_OUT_1_16_2_1 QOS_OUT_1(10000, 10, 40, 0x02, 2)
-#define QOS_OUT_1_1_16_2_1 QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
-#define QOS_IN_16_2_1 QOS_IN(10000, 10, 40, 0x02, 2)
+/* One unidirectional CIS. Unicast Server is Audio Sink */
+#define AC_1_4 QOS_OUT(10000, 10, 40, 0x02, 2)
+/* One unidirectional CIS. Unicast Server is Audio Source. */
+#define AC_2_10 QOS_IN(10000, 10, 40, 0x02, 2)
+/* One bidirectional CIS. Unicast Server is Audio Sink and Audio Source. */
+#define AC_3_5 QOS(10000, 10, 40, 0x02, 2)
+/* Two unidirectional CISes. Unicast Server is Audio Sink.
+ * #1 - CIG 1 CIS 1 (output)
+ * #2 - CIG 1 CIS 2 (output)
+ */
+#define AC_6i_1 QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
+#define AC_6i_2 QOS_OUT_1_2(10000, 10, 40, 0x02, 2)
+/* Two Unicast Servers. Unicast Server 1 is Audio Sink. Unicast Server 2 is
+ * Audio Sink.
+ * #1 - CIG 1 CIS auto (output)
+ * #2 - CIG 1 CIS auto (output)
+ */
+#define AC_6ii_1 QOS_OUT_1(10000, 10, 40, 0x02, 2)
+#define AC_6ii_2 QOS_OUT_1(10000, 10, 40, 0x02, 2)
+/* Two unidirectional CISes. Unicast Server is Audio Sink and Audio Source.
+ * #1 - CIG 1 CIS 1 (input)
+ * #2 - CIG 1 CIS 2 (output)
+ */
+#define AC_7i_1 QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
+#define AC_7i_2 QOS_IN_1_2(10000, 10, 40, 0x02, 2)
+/* Two Unidirectional CISes. Two Unicast Servers. Unicast Server 1 is Audio
+ * Sink. Unicast Server 2 is Audio Source.
+ * #1 - CIG 1 CIS auto (output)
+ * #2 - CIG 1 CIS auto (output)
+ */
+#define AC_7ii_1 QOS_OUT_1(10000, 10, 40, 0x02, 2)
+#define AC_7ii_2 QOS_IN_1(10000, 10, 40, 0x02, 2)
+/* One bidirectional CIS and one unidirectional CIS. Unicast Server is Audio
+ * Sink and Audio Source.
+ * #1 - CIG 1 CIS 1 (output)
+ * #2 - CIG 1 CIS 2 (input/output)
+ */
+#define AC_8i_1 QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
+#define AC_8i_2 QOS_1_2(10000, 10, 40, 0x02, 2)
+/* One bidirectional CIS and one unidirectional CIS. Two Unicast Servers.
+ * Unicast Server 1 is Audio Sink and Audio Source. Unicast Server 2 is
+ * Audio Sink.
+ * #1 - CIG 1 CIS auto (input/output)
+ * #2 - CIG 1 CIS auto (output)
+ */
+#define AC_8ii_1 QOS_1(10000, 10, 40, 0x02, 2)
+#define AC_8ii_2 QOS_OUT_1(10000, 10, 40, 0x02, 2)
+/* Two unidirectional CISes. Unicast Server is Audio Source.
+ * #1 - CIG 1 CIS 1 (input)
+ * #2 - CIG 1 CIS 2 (input)
+ */
+#define AC_9i_1 QOS_IN_1_1(10000, 10, 40, 0x02, 2)
+#define AC_9i_2 QOS_IN_1_2(10000, 10, 40, 0x02, 2)
+/* Two unidirectional CISes. Two Unicast Servers. Unicast Server 1 is Audio
+ * Source. Unicast Server 2 is Audio Source.
+ * #1 - CIG 1 CIS auto (input)
+ * #2 - CIG 1 CIS auto (input)
+ */
+#define AC_9ii_1 QOS_IN_1(10000, 10, 40, 0x02, 2)
+#define AC_9ii_2 QOS_IN_1(10000, 10, 40, 0x02, 2)
+/* Two bidirectional CISes. Unicast Server is Audio Sink and Audio Source.
+ * #1 - CIG 1 CIS 1 (input/output)
+ * #2 - CIG 1 CIS 2 (input/output)
+ */
+#define AC_11i_1 QOS_1_1(10000, 10, 40, 0x02, 2)
+#define AC_11i_2 QOS_1_2(10000, 10, 40, 0x02, 2)
+/* Two bidirectional CISes. Two Unicast Servers. Unicast Server 1 is Audio Sink
+ * and Audio Source. Unicast Server 2 is Audio Sink and Audio Source.
+ * #1 - CIG 1 CIS auto (input/output)
+ * #2 - CIG 1 CIS auto (input/output)
+ */
+#define AC_11ii_1 QOS_1(10000, 10, 40, 0x02, 2)
+#define AC_11ii_2 QOS_1(10000, 10, 40, 0x02, 2)
+
+#define BCODE {0x01, 0x02, 0x68, 0x05, 0x53, 0xf1, 0x41, 0x5a, \
+				0xa2, 0x65, 0xbb, 0xaf, 0xc6, 0xea, 0x03, 0xb8}
+
+#define QOS_BCAST_FULL(_big, _bis, _encryption, _bcode, _in, _out) \
+{ \
+	.bcast = { \
+		.big = _big, \
+		.bis = _bis, \
+		.sync_interval = 0x07, \
+		.packing = 0x00, \
+		.framing = 0x00, \
+		.in = _in, \
+		.out = _out, \
+		.encryption = _encryption, \
+		.bcode = _bcode, \
+		.options = 0x00, \
+		.skip = 0x0000, \
+		.sync_timeout = 0x4000, \
+		.sync_cte_type = 0x00, \
+		.mse = 0x00, \
+		.timeout = 0x4000, \
+	}, \
+}
+
+#define BCAST_QOS_OUT(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_BCAST_FULL(BT_ISO_QOS_BIG_UNSET, BT_ISO_QOS_BIS_UNSET, \
+		0x00, {0x00}, {}, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_OUT_ENC(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_BCAST_FULL(BT_ISO_QOS_BIG_UNSET, BT_ISO_QOS_BIS_UNSET, \
+		0x01, BCODE, {}, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_OUT_1(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_BCAST_FULL(0x01, BT_ISO_QOS_BIS_UNSET, \
+		0x00, {0x00}, {}, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_OUT_1_1(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_BCAST_FULL(0x01, 0x01, \
+		0x00, {0x00}, {}, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_IN(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_BCAST_FULL(BT_ISO_QOS_BIG_UNSET, BT_ISO_QOS_BIS_UNSET, \
+		0x00, {0x00}, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
+
+#define BCAST_QOS_IN_ENC(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_BCAST_FULL(BT_ISO_QOS_BIG_UNSET, BT_ISO_QOS_BIS_UNSET, \
+		0x01, BCODE, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
+
+#define QOS_OUT_16_2_1 BCAST_QOS_OUT(10000, 10, 40, 0x02, 2)
+#define QOS_OUT_ENC_16_2_1 BCAST_QOS_OUT_ENC(10000, 10, 40, 0x02, 2)
+#define QOS_OUT_1_16_2_1 BCAST_QOS_OUT_1(10000, 10, 40, 0x02, 2)
+#define QOS_OUT_1_1_16_2_1 BCAST_QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
+#define QOS_IN_16_2_1 BCAST_QOS_IN(10000, 10, 40, 0x02, 2)
+#define QOS_IN_ENC_16_2_1 BCAST_QOS_IN_ENC(10000, 10, 40, 0x02, 2)
 
 struct test_data {
 	const void *test_data;
@@ -142,6 +293,7 @@ struct test_data {
 
 struct iso_client_data {
 	struct bt_iso_qos qos;
+	struct bt_iso_qos qos_2;
 	int expect_err;
 	const struct iovec *send;
 	const struct iovec *recv;
@@ -149,6 +301,8 @@ struct iso_client_data {
 	bool bcast;
 	bool defer;
 	bool disconnect;
+	bool ts;
+	bool mcis;
 };
 
 static void mgmt_debug(const char *str, void *user_data)
@@ -572,6 +726,14 @@ static const struct iso_client_data listen_16_2_1_recv = {
 	.server = true,
 };
 
+static const struct iso_client_data listen_16_2_1_recv_ts = {
+	.qos = QOS_16_2_1,
+	.expect_err = 0,
+	.recv = &send_16_2_1,
+	.server = true,
+	.ts = true,
+};
+
 static const struct iso_client_data defer_16_2_1 = {
 	.qos = QOS_16_2_1,
 	.expect_err = 0,
@@ -635,8 +797,100 @@ static const struct iso_client_data reconnect_16_2_1 = {
 	.disconnect = true,
 };
 
+static const struct iso_client_data connect_ac_1_4 = {
+	.qos = AC_1_4,
+	.expect_err = 0
+};
+
+static const struct iso_client_data connect_ac_2_10 = {
+	.qos = AC_2_10,
+	.expect_err = 0
+};
+
+static const struct iso_client_data connect_ac_3_5 = {
+	.qos = AC_3_5,
+	.expect_err = 0
+};
+
+static const struct iso_client_data connect_ac_6i = {
+	.qos = AC_6i_1,
+	.qos_2 = AC_6i_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_6ii = {
+	.qos = AC_6ii_1,
+	.qos_2 = AC_6ii_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_7i = {
+	.qos = AC_7i_1,
+	.qos_2 = AC_7i_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_7ii = {
+	.qos = AC_7ii_1,
+	.qos_2 = AC_7ii_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_8i = {
+	.qos = AC_8i_1,
+	.qos_2 = AC_8i_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_8ii = {
+	.qos = AC_8ii_1,
+	.qos_2 = AC_8ii_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_9i = {
+	.qos = AC_9i_1,
+	.qos_2 = AC_9i_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_9ii = {
+	.qos = AC_9ii_1,
+	.qos_2 = AC_9ii_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_11i = {
+	.qos = AC_11i_1,
+	.qos_2 = AC_11i_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_ac_11ii = {
+	.qos = AC_11ii_1,
+	.qos_2 = AC_11ii_2,
+	.expect_err = 0,
+	.mcis = true,
+};
+
 static const struct iso_client_data bcast_16_2_1_send = {
 	.qos = QOS_OUT_16_2_1,
+	.expect_err = 0,
+	.send = &send_16_2_1,
+	.bcast = true,
+};
+
+static const struct iso_client_data bcast_enc_16_2_1_send = {
+	.qos = QOS_OUT_ENC_16_2_1,
 	.expect_err = 0,
 	.send = &send_16_2_1,
 	.bcast = true,
@@ -661,6 +915,15 @@ static const struct iso_client_data bcast_16_2_1_recv = {
 	.expect_err = 0,
 	.recv = &send_16_2_1,
 	.bcast = true,
+	.server = true,
+};
+
+static const struct iso_client_data bcast_enc_16_2_1_recv = {
+	.qos = QOS_IN_ENC_16_2_1,
+	.expect_err = 0,
+	.recv = &send_16_2_1,
+	.bcast = true,
+	.server = true,
 };
 
 static void client_connectable_complete(uint16_t opcode, uint8_t status,
@@ -779,7 +1042,9 @@ static void setup_powered_callback(uint8_t status, uint16_t length,
 		if (isodata->bcast) {
 			bthost_set_pa_params(host);
 			bthost_set_pa_enable(host, 0x01);
-			bthost_create_big(host, 1);
+			bthost_create_big(host, 1,
+					isodata->qos.bcast.encryption,
+					isodata->qos.bcast.bcode);
 		} else if (!isodata->send && isodata->recv) {
 			const uint8_t *bdaddr;
 
@@ -968,15 +1233,27 @@ static int connect_iso_sock(struct test_data *data, uint8_t num, int sk)
 	const struct iso_client_data *isodata = data->test_data;
 	struct hciemu_client *client;
 	const uint8_t *client_bdaddr = NULL;
+	const struct bt_iso_qos *qos = &isodata->qos;
 	struct sockaddr_iso addr;
 	char str[18];
 	int err;
 
 	client = hciemu_get_client(data->hciemu, num);
 	if (!client) {
-		tester_warn("No client");
-		return -ENODEV;
+		if (!isodata->mcis) {
+			tester_warn("No client");
+			return -ENODEV;
+		}
+
+		client = hciemu_get_client(data->hciemu, 0);
+		if (!client) {
+			tester_warn("No client");
+			return -ENODEV;
+		}
 	}
+
+	if (num && isodata->mcis)
+		qos = &isodata->qos_2;
 
 	if (!isodata->bcast) {
 		client_bdaddr = hciemu_client_bdaddr(client);
@@ -995,8 +1272,7 @@ static int connect_iso_sock(struct test_data *data, uint8_t num, int sk)
 		}
 	}
 
-	err = setsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &isodata->qos,
-						sizeof(isodata->qos));
+	err = setsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, qos, sizeof(*qos));
 	if (err < 0) {
 		tester_warn("Can't set socket BT_ISO_QOS option : %s (%d)",
 							strerror(errno), errno);
@@ -1071,44 +1347,161 @@ static bool check_io_qos(const struct bt_iso_io_qos *io1,
 	return true;
 }
 
-static bool check_qos(const struct bt_iso_qos *qos1,
-				const struct bt_iso_qos *qos2)
+static bool check_ucast_qos(const struct bt_iso_qos *qos1,
+				const struct bt_iso_qos *qos2,
+				const struct bt_iso_qos *qos2_2)
 {
-	if (qos1->cig != BT_ISO_QOS_CIG_UNSET &&
-			qos2->cig != BT_ISO_QOS_CIG_UNSET &&
-			qos1->cig != qos2->cig) {
+	if (qos1->ucast.cig != BT_ISO_QOS_CIG_UNSET &&
+			qos2->ucast.cig != BT_ISO_QOS_CIG_UNSET &&
+			qos1->ucast.cig != qos2->ucast.cig) {
+		if (qos2_2)
+			return check_ucast_qos(qos1, qos2_2, NULL);
+
 		tester_warn("Unexpected CIG ID: 0x%02x != 0x%02x",
-				qos1->cig, qos2->cig);
+				qos1->ucast.cig, qos2->ucast.cig);
 		return false;
 	}
 
-	if (qos1->cis != BT_ISO_QOS_CIS_UNSET &&
-			qos2->cis != BT_ISO_QOS_CIS_UNSET &&
-			qos1->cis != qos2->cis) {
+	if (qos1->ucast.cis != BT_ISO_QOS_CIS_UNSET &&
+			qos2->ucast.cis != BT_ISO_QOS_CIS_UNSET &&
+			qos1->ucast.cis != qos2->ucast.cis) {
+		if (qos2_2)
+			return check_ucast_qos(qos1, qos2_2, NULL);
+
 		tester_warn("Unexpected CIS ID: 0x%02x != 0x%02x",
-				qos1->cis, qos2->cis);
+				qos1->ucast.cis, qos2->ucast.cis);
 		return false;
 	}
 
-	if (qos1->packing != qos2->packing) {
+	if (qos1->ucast.packing != qos2->ucast.packing) {
+		if (qos2_2)
+			return check_ucast_qos(qos1, qos2_2, NULL);
+
 		tester_warn("Unexpected QoS packing: 0x%02x != 0x%02x",
-				qos1->packing, qos2->packing);
+				qos1->ucast.packing, qos2->ucast.packing);
 		return false;
 	}
 
-	if (qos1->framing != qos2->framing) {
+	if (qos1->ucast.framing != qos2->ucast.framing) {
+		if (qos2_2)
+			return check_ucast_qos(qos1, qos2_2, NULL);
+
 		tester_warn("Unexpected QoS framing: 0x%02x != 0x%02x",
-				qos1->framing, qos2->framing);
+				qos1->ucast.framing, qos2->ucast.framing);
 		return false;
 	}
 
-	if (!check_io_qos(&qos1->in, &qos2->in)) {
+	if (!check_io_qos(&qos1->ucast.in, &qos2->ucast.in)) {
+		if (qos2_2)
+			return check_ucast_qos(qos1, qos2_2, NULL);
+
 		tester_warn("Unexpected Input QoS");
 		return false;
 	}
 
-	if (!check_io_qos(&qos1->out, &qos2->out)) {
+	if (!check_io_qos(&qos1->ucast.out, &qos2->ucast.out)) {
+		if (qos2_2)
+			return check_ucast_qos(qos1, qos2_2, NULL);
+
 		tester_warn("Unexpected Output QoS");
+		return false;
+	}
+
+	return true;
+}
+
+static bool check_bcast_qos(const struct bt_iso_qos *qos1,
+				const struct bt_iso_qos *qos2)
+{
+	if (qos1->bcast.big != BT_ISO_QOS_BIG_UNSET &&
+			qos2->bcast.big != BT_ISO_QOS_BIG_UNSET &&
+			qos1->bcast.big != qos2->bcast.big) {
+		tester_warn("Unexpected BIG ID: 0x%02x != 0x%02x",
+				qos1->bcast.big, qos2->bcast.big);
+		return false;
+	}
+
+	if (qos1->bcast.bis != BT_ISO_QOS_BIS_UNSET &&
+			qos2->bcast.bis != BT_ISO_QOS_BIS_UNSET &&
+			qos1->bcast.bis != qos2->bcast.bis) {
+		tester_warn("Unexpected BIS ID: 0x%02x != 0x%02x",
+				qos1->bcast.bis, qos2->bcast.bis);
+		return false;
+	}
+
+	if (qos1->bcast.sync_interval != qos2->bcast.sync_interval) {
+		tester_warn("Unexpected QoS sync interval: 0x%02x != 0x%02x",
+			qos1->bcast.sync_interval, qos2->bcast.sync_interval);
+		return false;
+	}
+
+	if (qos1->bcast.packing != qos2->bcast.packing) {
+		tester_warn("Unexpected QoS packing: 0x%02x != 0x%02x",
+				qos1->bcast.packing, qos2->bcast.packing);
+		return false;
+	}
+
+	if (qos1->bcast.framing != qos2->bcast.framing) {
+		tester_warn("Unexpected QoS framing: 0x%02x != 0x%02x",
+				qos1->bcast.framing, qos2->bcast.framing);
+		return false;
+	}
+
+	if (!check_io_qos(&qos1->ucast.in, &qos2->ucast.in)) {
+		tester_warn("Unexpected Input QoS");
+		return false;
+	}
+
+	if (!check_io_qos(&qos1->ucast.out, &qos2->ucast.out)) {
+		tester_warn("Unexpected Output QoS");
+		return false;
+	}
+
+	if (qos1->bcast.encryption != qos2->bcast.encryption) {
+		tester_warn("Unexpected QoS encryption: 0x%02x != 0x%02x",
+				qos1->bcast.encryption, qos2->bcast.encryption);
+		return false;
+	}
+
+	if (memcmp(qos1->bcast.bcode, qos2->bcast.bcode,
+				sizeof(qos1->bcast.bcode))) {
+		tester_warn("Unexpected QoS Broadcast Code");
+		return false;
+	}
+
+	if (qos1->bcast.options != qos2->bcast.options) {
+		tester_warn("Unexpected QoS options: 0x%02x != 0x%02x",
+				qos1->bcast.options, qos2->bcast.options);
+		return false;
+	}
+
+	if (qos1->bcast.skip != qos2->bcast.skip) {
+		tester_warn("Unexpected QoS skip: 0x%04x != 0x%04x",
+				qos1->bcast.skip, qos2->bcast.skip);
+		return false;
+	}
+
+	if (qos1->bcast.sync_timeout != qos2->bcast.sync_timeout) {
+		tester_warn("Unexpected QoS sync timeout: 0x%04x != 0x%04x",
+			qos1->bcast.sync_timeout, qos2->bcast.sync_timeout);
+		return false;
+	}
+
+	if (qos1->bcast.sync_cte_type != qos2->bcast.sync_cte_type) {
+		tester_warn("Unexpected QoS sync cte type: 0x%02x != 0x%02x",
+			qos1->bcast.sync_cte_type, qos2->bcast.sync_cte_type);
+		return false;
+	}
+
+	if (qos1->bcast.mse != qos2->bcast.mse) {
+		tester_warn("Unexpected QoS MSE: 0x%02x != 0x%02x",
+				qos1->bcast.mse, qos2->bcast.mse);
+		return false;
+	}
+
+	if (qos1->bcast.timeout != qos2->bcast.timeout) {
+		tester_warn("Unexpected QoS MSE: 0x%04x != 0x%04x",
+				qos1->bcast.timeout, qos2->bcast.timeout);
 		return false;
 	}
 
@@ -1146,6 +1539,7 @@ static void iso_recv(struct test_data *data, GIOChannel *io)
 {
 	const struct iso_client_data *isodata = data->test_data;
 	struct bthost *host;
+	static uint16_t sn;
 
 	tester_print("Receive %zu bytes of data", isodata->recv->iov_len);
 
@@ -1156,7 +1550,8 @@ static void iso_recv(struct test_data *data, GIOChannel *io)
 	}
 
 	host = hciemu_client_get_host(data->hciemu);
-	bthost_send_iso(host, data->handle, isodata->recv, 1);
+	bthost_send_iso(host, data->handle, isodata->ts, sn++, 0,
+							isodata->recv, 1);
 
 	data->io_id[0] = g_io_add_watch(io, G_IO_IN, iso_recv_data, data);
 }
@@ -1239,6 +1634,7 @@ static gboolean iso_connect(GIOChannel *io, GIOCondition cond,
 	int err, sk_err, sk;
 	socklen_t len;
 	struct bt_iso_qos qos;
+	bool ret = true;
 
 	sk = g_io_channel_unix_get_fd(io);
 
@@ -1253,7 +1649,13 @@ static gboolean iso_connect(GIOChannel *io, GIOCondition cond,
 		return FALSE;
 	}
 
-	if (!check_qos(&qos, &isodata->qos)) {
+	if (!isodata->bcast) {
+		ret = check_ucast_qos(&qos, &isodata->qos,
+				      isodata->mcis ? &isodata->qos_2 : NULL);
+	} else if (!isodata->server)
+		ret = check_bcast_qos(&qos, &isodata->qos);
+
+	if (!ret) {
 		tester_warn("Unexpected QoS parameter");
 		tester_test_failed();
 		return FALSE;
@@ -1393,8 +1795,13 @@ static void setup_connect(struct test_data *data, uint8_t num, GIOFunc func)
 static void test_connect(const void *test_data)
 {
 	struct test_data *data = tester_get_data();
+	const struct iso_client_data *isodata = test_data;
 
 	setup_connect(data, 0, iso_connect_cb);
+
+	/* Check if configuration requires multiple CIS setup */
+	if (!isodata->bcast && isodata->mcis)
+		setup_connect(data, 1, iso_connect2_cb);
 }
 
 static void setup_reconnect(struct test_data *data, uint8_t num, GIOFunc func)
@@ -1510,6 +1917,13 @@ static int listen_iso_sock(struct test_data *data)
 						strerror(errno), errno);
 			goto fail;
 		}
+	}
+
+	if (setsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &isodata->qos,
+						sizeof(isodata->qos)) < 0) {
+		tester_print("Can't set socket BT_ISO_QOS option: %s (%d)",
+					strerror(errno), errno);
+		goto fail;
 	}
 
 	if (listen(sk, 10)) {
@@ -1808,6 +2222,10 @@ int main(int argc, char *argv[])
 	test_iso("ISO Receive - Success", &listen_16_2_1_recv, setup_powered,
 							test_listen);
 
+	test_iso("ISO Receive Timestamped - Success", &listen_16_2_1_recv_ts,
+							setup_powered,
+							test_listen);
+
 	test_iso("ISO Defer - Success", &defer_16_2_1, setup_powered,
 							test_defer);
 
@@ -1841,7 +2259,49 @@ int main(int argc, char *argv[])
 							setup_powered,
 							test_reconnect);
 
+	test_iso("ISO AC 1 & 4 - Success", &connect_ac_1_4, setup_powered,
+							test_connect);
+
+	test_iso("ISO AC 2 & 10 - Success", &connect_ac_2_10, setup_powered,
+							test_connect);
+
+	test_iso("ISO AC 3 & 5 - Success", &connect_ac_3_5, setup_powered,
+							test_connect);
+
+	test_iso("ISO AC 6(i) - Success", &connect_ac_6i, setup_powered,
+							test_connect);
+
+	test_iso2("ISO AC 6(ii) - Success", &connect_ac_6ii, setup_powered,
+							test_connect2);
+
+	test_iso("ISO AC 7(i) - Success", &connect_ac_7i, setup_powered,
+							test_connect);
+
+	test_iso2("ISO AC 7(ii) - Success", &connect_ac_7ii, setup_powered,
+							test_connect2);
+
+	test_iso("ISO AC 8(i) - Success", &connect_ac_8i, setup_powered,
+							test_connect);
+
+	test_iso2("ISO AC 8(ii) - Success", &connect_ac_8ii, setup_powered,
+							test_connect2);
+
+	test_iso("ISO AC 9(i) - Success", &connect_ac_9i, setup_powered,
+							test_connect);
+
+	test_iso2("ISO AC 9(ii) - Success", &connect_ac_9ii, setup_powered,
+							test_connect2);
+
+	test_iso("ISO AC 11(i) - Success", &connect_ac_11i, setup_powered,
+							test_connect);
+
+	test_iso2("ISO AC 11(ii) - Success", &connect_ac_11ii, setup_powered,
+							test_connect2);
+
 	test_iso("ISO Broadcaster - Success", &bcast_16_2_1_send, setup_powered,
+							test_bcast);
+	test_iso("ISO Broadcaster Encrypted - Success", &bcast_enc_16_2_1_send,
+							setup_powered,
 							test_bcast);
 	test_iso("ISO Broadcaster BIG 0x01 - Success", &bcast_1_16_2_1_send,
 							setup_powered,
@@ -1852,6 +2312,10 @@ int main(int argc, char *argv[])
 							test_bcast);
 
 	test_iso("ISO Broadcaster Receiver - Success", &bcast_16_2_1_recv,
+							setup_powered,
+							test_bcast_recv);
+	test_iso("ISO Broadcaster Receiver Encrypted - Success",
+							&bcast_enc_16_2_1_recv,
 							setup_powered,
 							test_bcast_recv);
 

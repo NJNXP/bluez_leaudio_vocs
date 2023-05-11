@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation. All rights reserved.
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -466,15 +467,13 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 	/* TODO: Check if stream capabilities match add support for Latency
 	 * and PHY.
 	 */
-	if (ep->stream)
-		ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
-						config_cb, ep);
-	else
-		ep->stream = bt_bap_config(ep->data->bap, ep->lpac, ep->rpac,
-						&ep->qos, ep->caps,
-						config_cb, ep);
+	if (!ep->stream)
+		ep->stream = bt_bap_stream_new(ep->data->bap, ep->lpac,
+						ep->rpac, &ep->qos, ep->caps);
 
-	if (!ep->stream) {
+	ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
+						config_cb, ep);
+	if (!ep->id) {
 		DBG("Unable to config stream");
 		free(ep->caps);
 		ep->caps = NULL;
@@ -483,6 +482,9 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
 	ep->msg = dbus_message_ref(msg);
+
+	if (ep->metadata && ep->metadata->iov_len)
+		bt_bap_stream_metadata(ep->stream, ep->metadata, NULL, NULL);
 
 	return NULL;
 }
@@ -510,6 +512,22 @@ static void ep_free(void *data)
 	free(ep);
 }
 
+struct match_ep {
+	struct bt_bap_pac *lpac;
+	struct bt_bap_pac *rpac;
+};
+
+static bool match_ep(const void *data, const void *user_data)
+{
+	const struct bap_ep *ep = data;
+	const struct match_ep *match = user_data;
+
+	if (ep->lpac != match->lpac)
+		return false;
+
+	return ep->rpac == match->rpac;
+}
+
 static struct bap_ep *ep_register(struct btd_service *service,
 					struct bt_bap_pac *lpac,
 					struct bt_bap_pac *rpac)
@@ -520,6 +538,7 @@ static struct bap_ep *ep_register(struct btd_service *service,
 	struct queue *queue;
 	int i, err;
 	const char *suffix;
+	struct match_ep match = { lpac, rpac };
 
 	switch (bt_bap_pac_get_type(rpac)) {
 	case BT_BAP_SINK:
@@ -535,6 +554,10 @@ static struct bap_ep *ep_register(struct btd_service *service,
 	default:
 		return NULL;
 	}
+
+	ep = queue_find(queue, match_ep, &match);
+	if (ep)
+		return ep;
 
 	ep = new0(struct bap_ep, 1);
 	ep->data = data;
@@ -580,15 +603,13 @@ static void bap_config(void *data, void *user_data)
 	/* TODO: Check if stream capabilities match add support for Latency
 	 * and PHY.
 	 */
-	if (ep->stream)
-		ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
-						config_cb, ep);
-	else
-		ep->stream = bt_bap_config(ep->data->bap, ep->lpac, ep->rpac,
-						&ep->qos, ep->caps,
-						config_cb, ep);
+	if (!ep->stream)
+		ep->stream = bt_bap_stream_new(ep->data->bap, ep->lpac,
+						ep->rpac, &ep->qos, ep->caps);
 
-	if (!ep->stream) {
+	ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
+						config_cb, ep);
+	if (!ep->id) {
 		DBG("Unable to config stream");
 		util_iov_free(ep->caps, 1);
 		ep->caps = NULL;
@@ -607,19 +628,23 @@ static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 
 	if (err) {
 		error("err %d", err);
-		return;
+		ep->data->selecting--;
+		goto done;
 	}
 
 	ep->caps = util_iov_dup(caps, 1);
 
-	if (metadata && metadata->iov_base && metadata->iov_len)
+	if (metadata && metadata->iov_base && metadata->iov_len) {
 		ep->metadata = util_iov_dup(metadata, 1);
+		bt_bap_stream_metadata(ep->stream, ep->metadata, NULL, NULL);
+	}
 
 	ep->qos = *qos;
 
 	DBG("selecting %d", ep->data->selecting);
 	ep->data->selecting--;
 
+done:
 	if (ep->data->selecting)
 		return;
 
@@ -724,10 +749,10 @@ static bool match_stream_qos(const void *data, const void *user_data)
 
 	qos = bt_bap_stream_get_qos((void *)stream);
 
-	if (iso_qos->cig != qos->cig_id)
+	if (iso_qos->ucast.cig != qos->cig_id)
 		return false;
 
-	return iso_qos->cis == qos->cis_id;
+	return iso_qos->ucast.cis == qos->cis_id;
 }
 
 static void iso_confirm_cb(GIOChannel *io, void *user_data)
@@ -749,7 +774,7 @@ static void iso_confirm_cb(GIOChannel *io, void *user_data)
 	}
 
 	DBG("ISO: incoming connect from %s (CIG 0x%02x CIS 0x%02x)",
-					address, qos.cig, qos.cis);
+					address, qos.ucast.cig, qos.ucast.cis);
 
 	stream = queue_remove_if(data->streams, match_stream_qos, &qos);
 	if (!stream) {
@@ -968,11 +993,11 @@ static void bap_create_io(struct bap_data *data, struct bap_ep *ep,
 	}
 
 	memset(&iso_qos, 0, sizeof(iso_qos));
-	iso_qos.cig = qos[0] ? qos[0]->cig_id : qos[1]->cig_id;
-	iso_qos.cis = qos[0] ? qos[0]->cis_id : qos[1]->cis_id;
+	iso_qos.ucast.cig = qos[0] ? qos[0]->cig_id : qos[1]->cig_id;
+	iso_qos.ucast.cis = qos[0] ? qos[0]->cis_id : qos[1]->cis_id;
 
-	bap_iso_qos(qos[0], &iso_qos.in);
-	bap_iso_qos(qos[1], &iso_qos.out);
+	bap_iso_qos(qos[0], &iso_qos.ucast.in);
+	bap_iso_qos(qos[1], &iso_qos.ucast.out);
 
 	if (ep)
 		bap_connect_io(data, ep, stream, &iso_qos, defer);
@@ -998,9 +1023,10 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 	switch (new_state) {
 	case BT_BAP_STREAM_STATE_IDLE:
 		/* Release stream if idle */
-		if (ep)
+		if (ep) {
 			bap_io_close(ep);
-		else
+			ep->stream = NULL;
+		} else
 			queue_remove(data->streams, stream);
 		break;
 	case BT_BAP_STREAM_STATE_CONFIG:
@@ -1048,12 +1074,12 @@ static void pac_added(struct bt_bap_pac *pac, void *user_data)
 	bt_bap_foreach_pac(data->bap, BT_BAP_SINK, pac_found, service);
 }
 
-static bool ep_match_rpac(const void *data, const void *match_data)
+static bool ep_match_pac(const void *data, const void *match_data)
 {
 	const struct bap_ep *ep = data;
 	const struct bt_bap_pac *pac = match_data;
 
-	return ep->rpac == pac;
+	return ep->rpac == pac || ep->lpac == pac;
 }
 
 static void pac_removed(struct bt_bap_pac *pac, void *user_data)
@@ -1081,7 +1107,7 @@ static void pac_removed(struct bt_bap_pac *pac, void *user_data)
 		return;
 	}
 
-	ep = queue_remove_if(queue, ep_match_rpac, pac);
+	ep = queue_remove_if(queue, ep_match_pac, pac);
 	if (!ep)
 		return;
 
@@ -1166,8 +1192,8 @@ static void bap_connecting(struct bt_bap_stream *stream, bool state, int fd,
 			return;
 		}
 
-		ep->qos.cig_id = qos.cig;
-		ep->qos.cis_id = qos.cis;
+		ep->qos.cig_id = qos.ucast.cig;
+		ep->qos.cis_id = qos.ucast.cis;
 	}
 
 	DBG("stream %p fd %d: CIG 0x%02x CIS 0x%02x", stream, fd,
@@ -1327,6 +1353,7 @@ static struct btd_profile bap_profile = {
 	.device_remove	= bap_remove,
 	.accept		= bap_accept,
 	.disconnect	= bap_disconnect,
+	.auto_connect	= true,
 };
 
 static unsigned int bap_id = 0;

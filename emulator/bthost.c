@@ -5,6 +5,7 @@
  *
  *  Copyright (C) 2011-2012  Intel Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -38,6 +39,8 @@
 #define acl_flags(h)		(h >> 12)
 
 #define iso_flags_pb(f)		(f & 0x0003)
+#define iso_flags_ts(f)		((f >> 2) & 0x0001)
+#define iso_flags_pack(pb, ts)	(((pb) & 0x03) | (((ts) & 0x01) << 2))
 #define iso_data_len_pack(h, f)	((uint16_t) ((h) | ((f) << 14)))
 
 #define L2CAP_FEAT_FIXED_CHAN	0x00000080
@@ -728,41 +731,58 @@ void bthost_send_cid_v(struct bthost *bthost, uint16_t handle, uint16_t cid,
 	send_iov(bthost, handle, cid, iov, iovcnt);
 }
 
-static void send_iso(struct bthost *bthost, uint16_t handle,
+static void send_iso(struct bthost *bthost, uint16_t handle, bool ts,
+					uint16_t sn, uint32_t timestamp,
 					const struct iovec *iov, int iovcnt)
 {
 	struct bt_hci_iso_hdr iso_hdr;
 	struct bt_hci_iso_data_start data_hdr;
 	uint8_t pkt = BT_H4_ISO_PKT;
-	struct iovec pdu[3 + iovcnt];
+	struct iovec pdu[4 + iovcnt];
+	uint16_t flags, dlen;
 	int i, len = 0;
-	static uint16_t sn;
 
 	for (i = 0; i < iovcnt; i++) {
-		pdu[3 + i].iov_base = iov[i].iov_base;
-		pdu[3 + i].iov_len = iov[i].iov_len;
+		pdu[4 + i].iov_base = iov[i].iov_base;
+		pdu[4 + i].iov_len = iov[i].iov_len;
 		len += iov[i].iov_len;
 	}
 
 	pdu[0].iov_base = &pkt;
 	pdu[0].iov_len = sizeof(pkt);
 
-	iso_hdr.handle = acl_handle_pack(handle, 0x02);
-	iso_hdr.dlen = cpu_to_le16(len + sizeof(data_hdr));
+	flags = iso_flags_pack(0x02, ts);
+	dlen = len + sizeof(data_hdr);
+	if (ts)
+		dlen += sizeof(timestamp);
+
+	iso_hdr.handle = acl_handle_pack(handle, flags);
+	iso_hdr.dlen = cpu_to_le16(dlen);
 
 	pdu[1].iov_base = &iso_hdr;
 	pdu[1].iov_len = sizeof(iso_hdr);
 
-	data_hdr.sn = cpu_to_le16(sn++);
+	if (ts) {
+		timestamp = cpu_to_le32(timestamp);
+
+		pdu[2].iov_base = &timestamp;
+		pdu[2].iov_len = sizeof(timestamp);
+	} else {
+		pdu[2].iov_base = NULL;
+		pdu[2].iov_len = 0;
+	}
+
+	data_hdr.sn = cpu_to_le16(sn);
 	data_hdr.slen = cpu_to_le16(iso_data_len_pack(len, 0));
 
-	pdu[2].iov_base = &data_hdr;
-	pdu[2].iov_len = sizeof(data_hdr);
+	pdu[3].iov_base = &data_hdr;
+	pdu[3].iov_len = sizeof(data_hdr);
 
-	send_packet(bthost, pdu, 3 + iovcnt);
+	send_packet(bthost, pdu, 4 + iovcnt);
 }
 
-void bthost_send_iso(struct bthost *bthost, uint16_t handle,
+void bthost_send_iso(struct bthost *bthost, uint16_t handle, bool ts,
+					uint16_t sn, uint32_t timestamp,
 					const struct iovec *iov, int iovcnt)
 {
 	struct btconn *conn;
@@ -771,7 +791,7 @@ void bthost_send_iso(struct bthost *bthost, uint16_t handle,
 	if (!conn)
 		return;
 
-	send_iso(bthost, handle, iov, iovcnt);
+	send_iso(bthost, handle, ts, sn, timestamp, iov, iovcnt);
 }
 
 bool bthost_l2cap_req(struct bthost *bthost, uint16_t handle, uint8_t code,
@@ -3117,7 +3137,8 @@ void bthost_set_pa_enable(struct bthost *bthost, uint8_t enable)
 	send_command(bthost, BT_HCI_CMD_LE_SET_PA_ENABLE, &cp, sizeof(cp));
 }
 
-void bthost_create_big(struct bthost *bthost, uint8_t num_bis)
+void bthost_create_big(struct bthost *bthost, uint8_t num_bis,
+				uint8_t enc, const uint8_t *bcode)
 {
 	struct bt_hci_cmd_le_create_big cp;
 
@@ -3130,6 +3151,8 @@ void bthost_create_big(struct bthost *bthost, uint8_t num_bis)
 	cp.bis.latency = cpu_to_le16(10);
 	cp.bis.rtn = 0x02;
 	cp.bis.phy = 0x02;
+	cp.bis.encryption = enc;
+	memcpy(cp.bis.bcode, bcode, sizeof(cp.bis.bcode));
 	send_command(bthost, BT_HCI_CMD_LE_CREATE_BIG, &cp, sizeof(cp));
 }
 
@@ -3159,22 +3182,24 @@ void bthost_set_cig_params(struct bthost *bthost, uint8_t cig_id,
 	cp = malloc(sizeof(*cp) + sizeof(*cp->cis));
 	memset(cp, 0, sizeof(*cp) + sizeof(*cp->cis));
 	cp->cig_id = cig_id;
-	put_le24(qos->in.interval ? qos->in.interval : qos->out.interval,
-							cp->c_interval);
-	put_le24(qos->out.interval ? qos->out.interval : qos->in.interval,
-							cp->p_interval);
-	cp->c_latency = cpu_to_le16(qos->in.latency ? qos->in.latency :
-							qos->out.latency);
-	cp->p_latency = cpu_to_le16(qos->out.latency ? qos->out.latency :
-							qos->in.latency);
+	put_le24(qos->ucast.in.interval ? qos->ucast.in.interval :
+				qos->ucast.out.interval, cp->c_interval);
+	put_le24(qos->ucast.out.interval ? qos->ucast.out.interval :
+				qos->ucast.in.interval, cp->p_interval);
+	cp->c_latency = cpu_to_le16(qos->ucast.in.latency ?
+				qos->ucast.in.latency : qos->ucast.out.latency);
+	cp->p_latency = cpu_to_le16(qos->ucast.out.latency ?
+				qos->ucast.out.latency : qos->ucast.in.latency);
 	cp->num_cis = 0x01;
 	cp->cis[0].cis_id = cis_id;
-	cp->cis[0].c_sdu = qos->in.sdu;
-	cp->cis[0].p_sdu = qos->out.sdu;
-	cp->cis[0].c_phy = qos->in.phy ? qos->in.phy : qos->out.phy;
-	cp->cis[0].p_phy = qos->out.phy ? qos->out.phy : qos->in.phy;
-	cp->cis[0].c_rtn = qos->in.rtn;
-	cp->cis[0].p_rtn = qos->out.rtn;
+	cp->cis[0].c_sdu = qos->ucast.in.sdu;
+	cp->cis[0].p_sdu = qos->ucast.out.sdu;
+	cp->cis[0].c_phy = qos->ucast.in.phy ? qos->ucast.in.phy :
+							qos->ucast.out.phy;
+	cp->cis[0].p_phy = qos->ucast.out.phy ? qos->ucast.out.phy :
+							qos->ucast.in.phy;
+	cp->cis[0].c_rtn = qos->ucast.in.rtn;
+	cp->cis[0].p_rtn = qos->ucast.out.rtn;
 
 	send_command(bthost, BT_HCI_CMD_LE_SET_CIG_PARAMS, cp,
 				sizeof(*cp) + sizeof(*cp->cis));

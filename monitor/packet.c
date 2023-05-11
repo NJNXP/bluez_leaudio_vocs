@@ -5,6 +5,7 @@
  *
  *  Copyright (C) 2011-2014  Intel Corporation
  *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -8808,7 +8809,7 @@ static void le_big_create_sync_cmd(uint16_t index, const void *data,
 	print_field("BIG Handle: 0x%2.2x", cmd->handle);
 	print_field("BIG Sync Handle: 0x%4.4x", le16_to_cpu(cmd->sync_handle));
 	print_field("Encryption: %s (0x%2.2x)",
-			cmd->encryption ? "Unencrypted" : "Encrypted",
+			cmd->encryption ? "Encrypted" : "Unencrypted",
 			cmd->encryption);
 	print_hex_field("Broadcast Code", cmd->bcode, 16);
 	print_field("Maximum Number Subevents: 0x%2.2x", cmd->mse);
@@ -11944,7 +11945,7 @@ void packet_system_note(struct timeval *tv, struct ucred *cred,
 struct monitor_l2cap_hdr {
 	uint16_t cid;
 	uint16_t psm;
-};
+} __attribute__((packed));
 
 static void packet_decode(struct timeval *tv, struct ucred *cred, char dir,
 				uint16_t index, const char *color,
@@ -11963,7 +11964,8 @@ static void packet_decode(struct timeval *tv, struct ucred *cred, char dir,
 				NULL);
 
 	/* Discard last byte since it just a filler */
-	l2cap_frame(index, dir == '>', 0, hdr->cid, hdr->psm,
+	l2cap_frame(index, dir == '>', 0,
+			le16_to_cpu(hdr->cid), le16_to_cpu(hdr->psm),
 			data + sizeof(*hdr), size - (sizeof(*hdr) + 1));
 }
 
@@ -12649,6 +12651,8 @@ static const struct bitfield_data mgmt_settings_table[] = {
 	{ 15, "Static Address"		},
 	{ 16, "PHY Configuration"	},
 	{ 17, "Wideband Speech"		},
+	{ 18, "CIS Central"		},
+	{ 19, "CIS Peripheral"		},
 	{ }
 };
 
@@ -12868,6 +12872,7 @@ static void mgmt_print_identity_resolving_key(const void *data)
 
 	mgmt_print_address(data, address_type);
 	print_hex_field("Key", data + 7, 16);
+	keys_add_identity(data, address_type, data + 7);
 }
 
 static void mgmt_print_signature_resolving_key(const void *data)

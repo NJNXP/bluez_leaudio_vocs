@@ -23,6 +23,7 @@
 #include "lib/bluetooth.h"
 #include "lib/sdp.h"
 #include "lib/uuid.h"
+#include "lib/mgmt.h"
 
 #include "gdbus/gdbus.h"
 
@@ -86,15 +87,18 @@ struct endpoint_request {
 struct media_endpoint {
 	struct a2dp_sep		*sep;
 	struct bt_bap_pac	*pac;
-	void			*stream;
 	char			*sender;	/* Endpoint DBus bus id */
 	char			*path;		/* Endpoint object path */
 	char			*uuid;		/* Endpoint property UUID */
 	uint8_t			codec;		/* Endpoint codec */
+	uint16_t                cid;            /* Endpoint company ID */
+	uint16_t                vid;            /* Endpoint vendor codec ID */
 	bool			delay_reporting;/* Endpoint delay_reporting */
 	struct bt_bap_pac_qos	qos;		/* Endpoint qos */
 	uint8_t			*capabilities;	/* Endpoint property capabilities */
 	size_t			size;		/* Endpoint capabilities size */
+	uint8_t                 *metadata;      /* Endpoint property metadata */
+	size_t                  metadata_size;  /* Endpoint metadata size */
 	guint			hs_watch;
 	guint			ag_watch;
 	guint			watch;
@@ -178,6 +182,7 @@ static void media_endpoint_destroy(struct media_endpoint *endpoint)
 
 	g_dbus_remove_watch(btd_get_dbus_connection(), endpoint->watch);
 	g_free(endpoint->capabilities);
+	g_free(endpoint->metadata);
 	g_free(endpoint->sender);
 	g_free(endpoint->path);
 	g_free(endpoint->uuid);
@@ -896,6 +901,7 @@ static int pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	DBusMessage *msg;
 	DBusMessageIter iter, dict;
 	const char *key = "Capabilities";
+	uint32_t loc;
 
 	bt_bap_pac_get_codec(rpac, NULL, &caps, &metadata);
 	if (!caps)
@@ -926,6 +932,11 @@ static int pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
 					DBUS_TYPE_BYTE, &caps->iov_base,
 					caps->iov_len);
+
+	loc = bt_bap_pac_get_locations(rpac);
+	if (loc)
+		g_dbus_dict_append_entry(&dict, "Location", DBUS_TYPE_UINT32,
+									&loc);
 
 	if (metadata) {
 		key = "Metadata";
@@ -973,23 +984,20 @@ struct pac_config_data {
 static int transport_cmp(gconstpointer data, gconstpointer user_data)
 {
 	const struct media_transport *transport = data;
-	const char *path = user_data;
 
-	if (g_str_has_prefix(media_transport_get_path((void *)transport), path))
+	if (media_transport_get_stream((void *)transport) == user_data)
 		return 0;
 
 	return -1;
 }
 
 static struct media_transport *find_transport(struct media_endpoint *endpoint,
-						const char *path)
+						void *stream)
 {
 	GSList *match;
 
-	if (!path)
-		return NULL;
-
-	match = g_slist_find_custom(endpoint->transports, path, transport_cmp);
+	match = g_slist_find_custom(endpoint->transports, stream,
+								transport_cmp);
 	if (match == NULL)
 		return NULL;
 
@@ -1001,9 +1009,12 @@ static void pac_config_cb(struct media_endpoint *endpoint, void *ret, int size,
 {
 	struct pac_config_data *data = user_data;
 	gboolean *ret_value = ret;
+	struct media_transport *transport;
 
-	if (ret_value)
-		endpoint->stream = data->stream;
+	/* If transport was cleared, configuration was cancelled */
+	transport = find_transport(endpoint, data->stream);
+	if (!transport)
+		return;
 
 	data->cb(data->stream, ret_value ? 0 : -EINVAL);
 }
@@ -1020,11 +1031,9 @@ static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
 	DBusMessageIter iter;
 	const char *path;
 
-	path = bt_bap_stream_get_user_data(stream);
+	DBG("endpoint %p stream %p", endpoint, stream);
 
-	DBG("endpoint %p path %s", endpoint, path);
-
-	transport = find_transport(endpoint, path);
+	transport = find_transport(endpoint, stream);
 	if (!transport) {
 		struct bt_bap *bap = bt_bap_stream_get_session(stream);
 		struct btd_service *service = bt_bap_get_user_data(bap);
@@ -1044,14 +1053,14 @@ static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
 			return -EINVAL;
 		}
 
+		path = bt_bap_stream_get_user_data(stream);
+
 		transport = media_transport_create(device, path, cfg->iov_base,
 							cfg->iov_len, endpoint,
 							stream);
 		if (!transport)
 			return -EINVAL;
 
-		path = media_transport_get_path(transport);
-		bt_bap_stream_set_user_data(stream, (void *)path);
 		endpoint->transports = g_slist_append(endpoint->transports,
 								transport);
 	}
@@ -1084,11 +1093,13 @@ static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
 static void pac_clear(struct bt_bap_stream *stream, void *user_data)
 {
 	struct media_endpoint *endpoint = user_data;
+	struct media_transport *transport;
 
-	endpoint->stream = NULL;
+	DBG("endpoint %p stream %p", endpoint, stream);
 
-	while (endpoint->transports != NULL)
-		clear_configuration(endpoint, endpoint->transports->data);
+	transport = find_transport(endpoint, stream);
+	if (transport)
+		clear_configuration(endpoint, transport);
 }
 
 static struct bt_bap_pac_ops pac_ops = {
@@ -1108,6 +1119,7 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 	struct btd_gatt_database *database;
 	struct gatt_db *db;
 	struct iovec data;
+	struct iovec *metadata = NULL;
 	char *name;
 
 	if (!(g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL)) {
@@ -1128,12 +1140,16 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 		return false;
 	}
 
+	if (!bap_print_cc(endpoint->metadata, endpoint->metadata_size,
+					bap_debug, NULL)) {
+		error("Unable to parse endpoint metadata");
+		return false;
+	}
+
 	db = btd_gatt_database_get_db(database);
 
 	data.iov_base = endpoint->capabilities;
 	data.iov_len = endpoint->size;
-
-	/* TODO: Add support for metadata */
 
 	if (asprintf(&name, "%s:%s", endpoint->sender, endpoint->path) < 0) {
 		error("Could not allocate name for pac %s:%s",
@@ -1141,10 +1157,19 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 		return false;
 	}
 
-	endpoint->pac = bt_bap_add_pac(db, name, type, endpoint->codec,
-					&endpoint->qos, &data, NULL);
+	/* TODO: Add support for metadata */
+	if (endpoint->metadata_size) {
+		metadata = g_new0(struct iovec, 1);
+		metadata->iov_base = endpoint->metadata;
+		metadata->iov_len = endpoint->metadata_size;
+	}
+
+	endpoint->pac = bt_bap_add_vendor_pac(db, name, type, endpoint->codec,
+				endpoint->cid, endpoint->vid, &endpoint->qos,
+				&data, metadata);
 	if (!endpoint->pac) {
 		error("Unable to create PAC");
+		free(metadata);
 		return false;
 	}
 
@@ -1153,6 +1178,7 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 	DBG("PAC %s registered", name);
 
 	free(name);
+	free(metadata);
 
 	return true;
 }
@@ -1249,14 +1275,21 @@ static bool endpoint_properties_get(const char *uuid,
 	return true;
 }
 
-static bool endpoint_supported(struct btd_adapter *adapter)
+static bool a2dp_endpoint_supported(struct btd_adapter *adapter)
 {
+	if (!btd_adapter_has_settings(adapter, MGMT_SETTING_BREDR))
+		return false;
+
 	return true;
 }
 
 static bool experimental_endpoint_supported(struct btd_adapter *adapter)
 {
 	if (!btd_adapter_has_exp_feature(adapter, EXP_FEAT_ISO_SOCKET))
+		return false;
+
+	if (!btd_adapter_has_settings(adapter, MGMT_SETTING_CIS_CENTRAL |
+					MGMT_SETTING_CIS_PERIPHERAL))
 		return false;
 
 	return g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
@@ -1267,8 +1300,10 @@ static struct media_endpoint_init {
 	bool (*func)(struct media_endpoint *endpoint, int *err);
 	bool (*supported)(struct btd_adapter *adapter);
 } init_table[] = {
-	{ A2DP_SOURCE_UUID, endpoint_init_a2dp_source, endpoint_supported },
-	{ A2DP_SINK_UUID, endpoint_init_a2dp_sink, endpoint_supported },
+	{ A2DP_SOURCE_UUID, endpoint_init_a2dp_source,
+				a2dp_endpoint_supported },
+	{ A2DP_SINK_UUID, endpoint_init_a2dp_sink,
+				a2dp_endpoint_supported },
 	{ PAC_SINK_UUID, endpoint_init_pac_sink,
 				experimental_endpoint_supported },
 	{ PAC_SOURCE_UUID, endpoint_init_pac_source,
@@ -1282,9 +1317,13 @@ media_endpoint_create(struct media_adapter *adapter,
 						const char *uuid,
 						gboolean delay_reporting,
 						uint8_t codec,
+						uint16_t cid,
+						uint16_t vid,
 						struct bt_bap_pac_qos *qos,
 						uint8_t *capabilities,
 						int size,
+						uint8_t *metadata,
+						int metadata_size,
 						int *err)
 {
 	struct media_endpoint *endpoint;
@@ -1297,6 +1336,8 @@ media_endpoint_create(struct media_adapter *adapter,
 	endpoint->path = g_strdup(path);
 	endpoint->uuid = g_strdup(uuid);
 	endpoint->codec = codec;
+	endpoint->cid = cid;
+	endpoint->vid = vid;
 	endpoint->delay_reporting = delay_reporting;
 
 	if (qos)
@@ -1306,6 +1347,12 @@ media_endpoint_create(struct media_adapter *adapter,
 		endpoint->capabilities = g_new(uint8_t, size);
 		memcpy(endpoint->capabilities, capabilities, size);
 		endpoint->size = size;
+	}
+
+	if (metadata_size > 0) {
+		endpoint->metadata = g_new(uint8_t, metadata_size);
+		memcpy(endpoint->metadata, metadata, metadata_size);
+		endpoint->metadata_size = metadata_size;
 	}
 
 	endpoint->adapter = adapter;
@@ -1347,13 +1394,21 @@ media_endpoint_create(struct media_adapter *adapter,
 	return endpoint;
 }
 
+struct vendor {
+	uint16_t cid;
+	uint16_t vid;
+} __packed;
+
 static int parse_properties(DBusMessageIter *props, const char **uuid,
 				gboolean *delay_reporting, uint8_t *codec,
+				uint16_t *cid, uint16_t *vid,
 				struct bt_bap_pac_qos *qos,
-				uint8_t **capabilities, int *size)
+				uint8_t **capabilities, int *size,
+				uint8_t **metadata, int *metadata_size)
 {
 	gboolean has_uuid = FALSE;
 	gboolean has_codec = FALSE;
+	struct vendor vendor;
 
 	while (dbus_message_iter_get_arg_type(props) == DBUS_TYPE_DICT_ENTRY) {
 		const char *key;
@@ -1377,6 +1432,12 @@ static int parse_properties(DBusMessageIter *props, const char **uuid,
 				return -EINVAL;
 			dbus_message_iter_get_basic(&value, codec);
 			has_codec = TRUE;
+		} else if (strcasecmp(key, "Vendor") == 0) {
+			if (var != DBUS_TYPE_UINT32)
+				return -EINVAL;
+			dbus_message_iter_get_basic(&value, &vendor);
+			*cid = vendor.cid;
+			*vid = vendor.vid;
 		} else if (strcasecmp(key, "DelayReporting") == 0) {
 			if (var != DBUS_TYPE_BOOLEAN)
 				return -EINVAL;
@@ -1390,6 +1451,15 @@ static int parse_properties(DBusMessageIter *props, const char **uuid,
 			dbus_message_iter_recurse(&value, &array);
 			dbus_message_iter_get_fixed_array(&array, capabilities,
 							size);
+		} else if (strcasecmp(key, "Metadata") == 0) {
+			DBusMessageIter array;
+
+			if (var != DBUS_TYPE_ARRAY)
+				return -EINVAL;
+
+			dbus_message_iter_recurse(&value, &array);
+			dbus_message_iter_get_fixed_array(&array, metadata,
+							metadata_size);
 		} else if (strcasecmp(key, "Framing") == 0) {
 			if (var != DBUS_TYPE_BYTE)
 				return -EINVAL;
@@ -1413,11 +1483,11 @@ static int parse_properties(DBusMessageIter *props, const char **uuid,
 		} else if (strcasecmp(key, "PreferredMinimumDelay") == 0) {
 			if (var != DBUS_TYPE_UINT16)
 				return -EINVAL;
-			dbus_message_iter_get_basic(&value, &qos->pd_min);
+			dbus_message_iter_get_basic(&value, &qos->ppd_min);
 		} else if (strcasecmp(key, "PreferredMaximumDelay") == 0) {
 			if (var != DBUS_TYPE_UINT16)
 				return -EINVAL;
-			dbus_message_iter_get_basic(&value, &qos->pd_max);
+			dbus_message_iter_get_basic(&value, &qos->ppd_max);
 		}
 
 		dbus_message_iter_next(props);
@@ -1434,9 +1504,13 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	const char *sender, *path, *uuid;
 	gboolean delay_reporting = FALSE;
 	uint8_t codec = 0;
+	uint16_t cid = 0;
+	uint16_t vid = 0;
 	struct bt_bap_pac_qos qos = {};
 	uint8_t *capabilities = NULL;
+	uint8_t *metadata = NULL;
 	int size = 0;
+	int metadata_size = 0;
 	int err;
 
 	sender = dbus_message_get_sender(msg);
@@ -1453,12 +1527,14 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	if (dbus_message_iter_get_arg_type(&props) != DBUS_TYPE_DICT_ENTRY)
 		return btd_error_invalid_args(msg);
 
-	if (parse_properties(&props, &uuid, &delay_reporting, &codec, &qos,
-						&capabilities, &size) < 0)
+	if (parse_properties(&props, &uuid, &delay_reporting, &codec, &cid,
+			&vid, &qos, &capabilities, &size, &metadata,
+			&metadata_size) < 0)
 		return btd_error_invalid_args(msg);
 
 	if (media_endpoint_create(adapter, sender, path, uuid, delay_reporting,
-					codec, &qos, capabilities, size,
+					codec, cid, vid, &qos, capabilities,
+					size, metadata, metadata_size,
 					&err) == NULL) {
 		if (err == -EPROTONOSUPPORT)
 			return btd_error_not_supported(msg);
@@ -2485,9 +2561,12 @@ static void app_register_endpoint(void *data, void *user_data)
 	const char *uuid;
 	gboolean delay_reporting = FALSE;
 	uint8_t codec;
+	struct vendor vendor;
 	struct bt_bap_pac_qos qos;
 	uint8_t *capabilities = NULL;
 	int size = 0;
+	uint8_t *metadata = NULL;
+	int metadata_size = 0;
 	DBusMessageIter iter, array;
 	struct media_endpoint *endpoint;
 
@@ -2514,6 +2593,15 @@ static void app_register_endpoint(void *data, void *user_data)
 
 	dbus_message_iter_get_basic(&iter, &codec);
 
+	memset(&vendor, 0, sizeof(vendor));
+
+	if (g_dbus_proxy_get_property(proxy, "Vendor", &iter)) {
+		if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_UINT32)
+			goto fail;
+
+		dbus_message_iter_get_basic(&iter, &vendor);
+	}
+
 	/* DelayReporting and Capabilities are considered optional */
 	if (g_dbus_proxy_get_property(proxy, "DelayReporting", &iter))	{
 		if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_BOOLEAN)
@@ -2528,6 +2616,15 @@ static void app_register_endpoint(void *data, void *user_data)
 
 		dbus_message_iter_recurse(&iter, &array);
 		dbus_message_iter_get_fixed_array(&array, &capabilities, &size);
+	}
+
+	if (g_dbus_proxy_get_property(proxy, "Metadata", &iter)) {
+		if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY)
+			goto fail;
+
+		dbus_message_iter_recurse(&iter, &array);
+		dbus_message_iter_get_fixed_array(&array, &metadata,
+						&metadata_size);
 	}
 
 	/* Parse QoS preferences */
@@ -2582,8 +2679,11 @@ static void app_register_endpoint(void *data, void *user_data)
 	}
 
 	endpoint = media_endpoint_create(app->adapter, app->sender, path, uuid,
-						delay_reporting, codec, &qos,
-						capabilities, size, &app->err);
+						delay_reporting, codec,
+						vendor.cid, vendor.vid, &qos,
+						capabilities, size,
+						metadata, metadata_size,
+						&app->err);
 	if (!endpoint) {
 		error("Unable to register endpoint %s:%s: %s", app->sender,
 						path, strerror(-app->err));
