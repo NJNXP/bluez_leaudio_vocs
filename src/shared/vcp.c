@@ -31,10 +31,13 @@
 	vcp_debug(_vcp, "%s:%s() " fmt, __FILE__, __func__, ## arg)
 
 #define VCP_STEP_SIZE 1
+#define VOCS_VOL_OFFSET_UPPER_LIMIT 255
+#define VOCS_VOL_OFFSET_LOWER_LIMIT -255
 
 /* Apllication Error Code */
 #define BT_ATT_ERROR_INVALID_CHANGE_COUNTER	0x80
 #define BT_ATT_ERROR_OPCODE_NOT_SUPPORTED	0x81
+#define BT_ATT_ERROR_VALUE_OUT_OF_RANGE		0x82
 
 #define GEN_AUDIO_AUDLOC_NA                   0x00000000
 #define GEN_AUDIO_AUDLOC_FL                   0x00000001
@@ -100,7 +103,7 @@ struct bt_vcs_ab_vol {
 
 struct bt_vocs_set_vol_off {
 	uint8_t	change_counter;
-	uint8_t	set_vol_offset;
+	int16_t set_vol_offset;
 } __packed;
 
 struct bt_vcp_cb {
@@ -167,7 +170,7 @@ struct bt_vcs {
 
 /* Contains local bt_vcp_db */
 struct vol_offset_state {
-    uint16_t vol_offset;
+    int16_t vol_offset;
     uint8_t counter;
 } __packed;
 
@@ -705,6 +708,10 @@ static uint8_t vocs_set_vol_offset(struct bt_vocs *vocs, struct bt_vcp *vcp,
 		return BT_ATT_ERROR_INVALID_CHANGE_COUNTER;
 	}
 
+	if(req->set_vol_offset > VOCS_VOL_OFFSET_UPPER_LIMIT || req->set_vol_offset < VOCS_VOL_OFFSET_LOWER_LIMIT) {
+		DBG(vcp, "error: Value Out of Range");
+		return BT_ATT_ERROR_VALUE_OUT_OF_RANGE;
+	}
 	vstate->vol_offset = req->set_vol_offset;
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
@@ -1048,7 +1055,8 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 
 	/* Populate DB with VOCS attributes */
 	bt_uuid16_create(&uuid, VOL_OFFSET_CS_UUID);
-	vocs->service = gatt_db_add_service(db, &uuid, true, 9);
+
+	vocs->service = gatt_db_add_service(db, &uuid, false, 12);
 
 	bt_uuid16_create(&uuid, VOL_OFFSET_STATE_CHAR_UUID);
 	vocs->vos = gatt_db_service_add_characteristic(vocs->service,
@@ -1093,6 +1101,8 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 
 	vocs->voaodec_ccc = gatt_db_service_add_ccc(vocs->service,
 					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
+
+	gatt_db_service_set_active(vocs->service, true);
 
 	return vocs;
 }
