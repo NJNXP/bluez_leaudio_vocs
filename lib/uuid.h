@@ -179,6 +179,11 @@ extern "C" {
 #define VOL_CP_CHRC_UUID				0x2B7E
 #define VOL_FLAG_CHRC_UUID				0x2B7F
 
+#define VOL_OFFSET_STATE_CHAR_UUID		0x2B80
+#define AUDIO_LOCATION_CHRC_UUID		0x2B81
+#define VOL_OFFSET_CP_CHRC_UUID			0x2B82
+#define AUDIO_OUTPUT_DESC_CHAR_UUID		0x2B83
+
 #define GMCS_UUID                               0x1849
 #define MEDIA_PLAYER_NAME_CHRC_UUID             0x2b93
 #define MEDIA_TRACK_CHNGD_CHRC_UUID             0x2b96
