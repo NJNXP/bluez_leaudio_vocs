@@ -76,8 +76,8 @@ struct bt_vcp_db {
 };
 
 typedef void (*vcp_func_t)(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
-					const uint8_t *value, uint16_t length,
-					void *user_data);
+		const uint8_t *value, uint16_t length,
+		void *user_data);
 
 struct bt_vcp_pending {
 	unsigned int id;
@@ -114,8 +114,8 @@ struct bt_vcp_cb {
 };
 
 typedef void (*vcp_notify_t)(struct bt_vcp *vcp, uint16_t value_handle,
-				const uint8_t *value, uint16_t length,
-				void *user_data);
+		const uint8_t *value, uint16_t length,
+		void *user_data);
 
 struct bt_vcp_notify {
 	unsigned int id;
@@ -170,23 +170,23 @@ struct bt_vcs {
 
 /* Contains local bt_vcp_db */
 struct vol_offset_state {
-    int16_t vol_offset;
-    uint8_t counter;
+	int16_t vol_offset;
+	uint8_t counter;
 } __packed;
 
 struct bt_vocs {
-    struct bt_vcp_db *vdb;
-    struct vol_offset_state *vostate;
+	struct bt_vcp_db *vdb;
+	struct vol_offset_state *vostate;
 	uint32_t vocs_audio_loc;
 	char *vocs_ao_dec;
-    struct gatt_db_attribute *service;
-    struct gatt_db_attribute *vos;
-    struct gatt_db_attribute *vos_ccc;
-    struct gatt_db_attribute *voal;
-    struct gatt_db_attribute *voal_ccc;
-    struct gatt_db_attribute *vo_cp;
-    struct gatt_db_attribute *voaodec;
-    struct gatt_db_attribute *voaodec_ccc;
+	struct gatt_db_attribute *service;
+	struct gatt_db_attribute *vos;
+	struct gatt_db_attribute *vos_ccc;
+	struct gatt_db_attribute *voal;
+	struct gatt_db_attribute *voal_ccc;
+	struct gatt_db_attribute *vo_cp;
+	struct gatt_db_attribute *voaodec;
+	struct gatt_db_attribute *voaodec_ccc;
 };
 
 static struct queue *vcp_db;
@@ -407,7 +407,7 @@ static struct bt_vcp *vcp_get_session(struct bt_att *att, struct gatt_db *db)
 }
 
 static uint8_t vcs_rel_vol_down(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -440,13 +440,13 @@ static uint8_t vcs_rel_vol_down(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
-				 sizeof(struct vol_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
 static uint8_t vcs_rel_vol_up(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -479,13 +479,13 @@ static uint8_t vcs_rel_vol_up(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
-				 sizeof(struct vol_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
 static uint8_t vcs_unmute_rel_vol_down(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -519,13 +519,13 @@ static uint8_t vcs_unmute_rel_vol_down(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
-				 sizeof(struct vol_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
 static uint8_t vcs_unmute_rel_vol_up(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -559,13 +559,13 @@ static uint8_t vcs_unmute_rel_vol_up(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
-				 sizeof(struct vol_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
 static uint8_t vcs_set_absolute_vol(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -598,13 +598,13 @@ static uint8_t vcs_set_absolute_vol(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
-				 sizeof(struct vol_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
 static uint8_t vcs_unmute(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -637,13 +637,13 @@ static uint8_t vcs_unmute(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
-				 sizeof(struct vol_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
 static uint8_t vcs_mute(struct bt_vcs *vcs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_state *vstate;
@@ -679,7 +679,7 @@ static uint8_t vcs_mute(struct bt_vcs *vcs, struct bt_vcp *vcp,
 }
 
 static uint8_t vocs_set_vol_offset(struct bt_vocs *vocs, struct bt_vcp *vcp,
-				struct iovec *iov)
+		struct iovec *iov)
 {
 	struct bt_vcp_db *vdb;
 	struct vol_offset_state *vstate;
@@ -716,8 +716,8 @@ static uint8_t vocs_set_vol_offset(struct bt_vocs *vocs, struct bt_vcp *vcp,
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
 
 	gatt_db_attribute_notify(vdb->vocs->vos, (void *)vstate,
-				 sizeof(struct vol_offset_state),
-				 bt_vcp_get_att(vcp));
+			sizeof(struct vol_offset_state),
+			bt_vcp_get_att(vcp));
 	return 0;
 }
 
@@ -732,12 +732,12 @@ static uint8_t vocs_set_vol_offset(struct bt_vocs *vocs, struct bt_vcp *vcp,
 #define BT_VOCS_SET_VOL_OFFSET	0x01
 
 #define VCS_OP(_str, _op, _size, _func) \
-	{ \
-		.str = _str, \
-		.op = _op, \
-		.size = _size, \
-		.func = _func, \
-	}
+{ \
+	.str = _str, \
+	.op = _op, \
+	.size = _size, \
+	.func = _func, \
+}
 
 struct vcs_op_handler {
 	const char *str;
@@ -747,29 +747,29 @@ struct vcs_op_handler {
 			struct iovec *iov);
 } vcp_handlers[] = {
 	VCS_OP("Relative Volume Down", BT_VCS_REL_VOL_DOWN,
-		sizeof(uint8_t), vcs_rel_vol_down),
+			sizeof(uint8_t), vcs_rel_vol_down),
 	VCS_OP("Relative Volume Up", BT_VCS_REL_VOL_UP,
-		sizeof(uint8_t), vcs_rel_vol_up),
+			sizeof(uint8_t), vcs_rel_vol_up),
 	VCS_OP("Unmute - Relative Volume Down", BT_VCS_UNMUTE_REL_VOL_DOWN,
-		sizeof(uint8_t), vcs_unmute_rel_vol_down),
+			sizeof(uint8_t), vcs_unmute_rel_vol_down),
 	VCS_OP("Unmute - Relative Volume Up", BT_VCS_UNMUTE_REL_VOL_UP,
-		sizeof(uint8_t), vcs_unmute_rel_vol_up),
+			sizeof(uint8_t), vcs_unmute_rel_vol_up),
 	VCS_OP("Set Absolute Volume", BT_VCS_SET_ABSOLUTE_VOL,
-		sizeof(struct bt_vcs_ab_vol), vcs_set_absolute_vol),
+			sizeof(struct bt_vcs_ab_vol), vcs_set_absolute_vol),
 	VCS_OP("UnMute", BT_VCS_UNMUTE,
-		sizeof(uint8_t), vcs_unmute),
+			sizeof(uint8_t), vcs_unmute),
 	VCS_OP("Mute", BT_VCS_MUTE,
-		sizeof(uint8_t), vcs_mute),
+			sizeof(uint8_t), vcs_mute),
 	{}
 };
 
 #define VOCS_OP(_str, _op, _size, _func) \
-	{ \
-		.str = _str, \
-		.op = _op, \
-		.size = _size, \
-		.func = _func, \
-	}
+{ \
+	.str = _str, \
+	.op = _op, \
+	.size = _size, \
+	.func = _func, \
+}
 
 struct vocs_op_handler {
 	const char *str;
@@ -779,15 +779,15 @@ struct vocs_op_handler {
 			struct iovec *iov);
 } vocp_handlers[] = {
 	VOCS_OP("Set Volume Offset", BT_VOCS_SET_VOL_OFFSET,
-		sizeof(uint8_t), vocs_set_vol_offset),
+			sizeof(uint8_t), vocs_set_vol_offset),
 	{}
 };
 
 static void vcs_cp_write(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				const uint8_t *value, size_t len,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		const uint8_t *value, size_t len,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vcs *vcs = user_data;
 	struct bt_vcp *vcp = vcp_get_session(att, vcs->vdb->db);
@@ -809,7 +809,7 @@ static void vcs_cp_write(struct gatt_db_attribute *attrib,
 
 	if (len < sizeof(*vcp_op)) {
 		DBG(vcp, "invalid len %ld < %ld sizeof(*param)", len,
-							sizeof(*vcp_op));
+				sizeof(*vcp_op));
 		ret = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
 		goto respond;
 	}
@@ -822,7 +822,7 @@ static void vcs_cp_write(struct gatt_db_attribute *attrib,
 
 		if (iov.iov_len < handler->size) {
 			DBG(vcp, "invalid len %ld < %ld handler->size", len,
-			    handler->size);
+					handler->size);
 			ret = BT_ATT_ERROR_OPCODE_NOT_SUPPORTED;
 			goto respond;
 		}
@@ -844,10 +844,10 @@ respond:
 }
 
 static void vocs_cp_write(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				const uint8_t *value, size_t len,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		const uint8_t *value, size_t len,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vocs *vocs = user_data;
 	struct bt_vcp *vcp = vcp_get_session(att, vocs->vdb->db);
@@ -869,7 +869,7 @@ static void vocs_cp_write(struct gatt_db_attribute *attrib,
 
 	if (len < sizeof(*vcp_op)) {
 		DBG(vcp, "invalid len %ld < %ld sizeof(*param)", len,
-							sizeof(*vcp_op));
+				sizeof(*vcp_op));
 		ret = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
 		goto respond;
 	}
@@ -882,7 +882,7 @@ static void vocs_cp_write(struct gatt_db_attribute *attrib,
 
 		if (iov.iov_len < handler->size) {
 			DBG(vcp, "invalid len %ld < %ld handler->size", len,
-			    handler->size);
+					handler->size);
 			ret = BT_ATT_ERROR_OPCODE_NOT_SUPPORTED;
 			goto respond;
 		}
@@ -904,9 +904,9 @@ respond:
 }
 
 static void vcs_state_read(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vcs *vcs = user_data;
 	struct iovec iov;
@@ -915,13 +915,13 @@ static void vcs_state_read(struct gatt_db_attribute *attrib,
 	iov.iov_len = sizeof(*vcs->vstate);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
-							iov.iov_len);
+			iov.iov_len);
 }
 
 static void vocs_state_read(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vocs *vocs = user_data;
 	struct iovec iov;
@@ -930,13 +930,13 @@ static void vocs_state_read(struct gatt_db_attribute *attrib,
 	iov.iov_len = sizeof(*vocs->vostate);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
-							iov.iov_len);
+			iov.iov_len);
 }
 
 static void vcs_flag_read(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vcs *vcs = user_data;
 	struct iovec iov;
@@ -945,13 +945,13 @@ static void vcs_flag_read(struct gatt_db_attribute *attrib,
 	iov.iov_len = sizeof(vcs->vol_flag);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
-							iov.iov_len);
+			iov.iov_len);
 }
 
 static void vocs_voal_read(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vocs *vocs = user_data;
 	struct iovec iov;
@@ -960,13 +960,13 @@ static void vocs_voal_read(struct gatt_db_attribute *attrib,
 	iov.iov_len = sizeof(vocs->vocs_audio_loc);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
-							iov.iov_len);
+			iov.iov_len);
 }
 
 static void vocs_voaodec_read(struct gatt_db_attribute *attrib,
-				unsigned int id, uint16_t offset,
-				uint8_t opcode, struct bt_att *att,
-				void *user_data)
+		unsigned int id, uint16_t offset,
+		uint8_t opcode, struct bt_att *att,
+		void *user_data)
 {
 	struct bt_vocs *vocs = user_data;
 	struct iovec iov;
@@ -975,7 +975,7 @@ static void vocs_voaodec_read(struct gatt_db_attribute *attrib,
 	iov.iov_len = strlen(vocs->vocs_ao_dec);
 
 	gatt_db_attribute_read_result(attrib, id, 0, iov.iov_base,
-							iov.iov_len);
+			iov.iov_len);
 }
 
 static struct bt_vcs *vcs_new(struct gatt_db *db, struct bt_vcp_db *vdb)
@@ -1002,35 +1002,35 @@ static struct bt_vcs *vcs_new(struct gatt_db *db, struct bt_vcp_db *vdb)
 
 	bt_uuid16_create(&uuid, VOL_STATE_CHRC_UUID);
 	vcs->vs = gatt_db_service_add_characteristic(vcs->service,
-					&uuid,
-					BT_ATT_PERM_READ,
-					BT_GATT_CHRC_PROP_READ |
-					BT_GATT_CHRC_PROP_NOTIFY,
-					vcs_state_read, NULL,
-					vcs);
+			&uuid,
+			BT_ATT_PERM_READ,
+			BT_GATT_CHRC_PROP_READ |
+			BT_GATT_CHRC_PROP_NOTIFY,
+			vcs_state_read, NULL,
+			vcs);
 
 	vcs->vs_ccc = gatt_db_service_add_ccc(vcs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
+			BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
 
 	bt_uuid16_create(&uuid, VOL_CP_CHRC_UUID);
 	vcs->vol_cp = gatt_db_service_add_characteristic(vcs->service,
-					&uuid,
-					BT_ATT_PERM_WRITE,
-					BT_GATT_CHRC_PROP_WRITE,
-					NULL, vcs_cp_write,
-					vcs);
+			&uuid,
+			BT_ATT_PERM_WRITE,
+			BT_GATT_CHRC_PROP_WRITE,
+			NULL, vcs_cp_write,
+			vcs);
 
 	bt_uuid16_create(&uuid, VOL_FLAG_CHRC_UUID);
 	vcs->vf = gatt_db_service_add_characteristic(vcs->service,
-					&uuid,
-					BT_ATT_PERM_READ,
-					BT_GATT_CHRC_PROP_READ |
-					BT_GATT_CHRC_PROP_NOTIFY,
-					vcs_flag_read, NULL,
-					vcs);
+			&uuid,
+			BT_ATT_PERM_READ,
+			BT_GATT_CHRC_PROP_READ |
+			BT_GATT_CHRC_PROP_NOTIFY,
+			vcs_flag_read, NULL,
+			vcs);
 
 	vcs->vf_ccc = gatt_db_service_add_ccc(vcs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
+			BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
 
 
 	gatt_db_service_set_active(vcs->service, true);
@@ -1062,47 +1062,47 @@ static struct bt_vocs *vocs_new(struct gatt_db *db)
 
 	bt_uuid16_create(&uuid, VOL_OFFSET_STATE_CHAR_UUID);
 	vocs->vos = gatt_db_service_add_characteristic(vocs->service,
-					&uuid,
-					BT_ATT_PERM_READ,
-					BT_GATT_CHRC_PROP_READ |
-					BT_GATT_CHRC_PROP_NOTIFY,
-					vocs_state_read, NULL,
-					vocs);
+			&uuid,
+			BT_ATT_PERM_READ,
+			BT_GATT_CHRC_PROP_READ |
+			BT_GATT_CHRC_PROP_NOTIFY,
+			vocs_state_read, NULL,
+			vocs);
 
 	vocs->vos_ccc = gatt_db_service_add_ccc(vocs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
+			BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
 
 	bt_uuid16_create(&uuid, AUDIO_LOCATION_CHRC_UUID);
 	vocs->voal = gatt_db_service_add_characteristic(vocs->service,
-					&uuid,
-					BT_ATT_PERM_READ,
-					BT_GATT_CHRC_PROP_READ |
-					BT_GATT_CHRC_PROP_NOTIFY,
-					vocs_voal_read, NULL,
-					vocs);
+			&uuid,
+			BT_ATT_PERM_READ,
+			BT_GATT_CHRC_PROP_READ |
+			BT_GATT_CHRC_PROP_NOTIFY,
+			vocs_voal_read, NULL,
+			vocs);
 
 	vocs->voal_ccc = gatt_db_service_add_ccc(vocs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
-	
+			BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
+
 	bt_uuid16_create(&uuid, VOL_OFFSET_CP_CHRC_UUID);
 	vocs->vo_cp = gatt_db_service_add_characteristic(vocs->service,
-					&uuid,
-					BT_ATT_PERM_WRITE,
-					BT_GATT_CHRC_PROP_WRITE,
-					NULL, vocs_cp_write,
-					vocs);
+			&uuid,
+			BT_ATT_PERM_WRITE,
+			BT_GATT_CHRC_PROP_WRITE,
+			NULL, vocs_cp_write,
+			vocs);
 
 	bt_uuid16_create(&uuid, AUDIO_OUTPUT_DESC_CHAR_UUID);
 	vocs->voaodec = gatt_db_service_add_characteristic(vocs->service,
-					&uuid,
-					BT_ATT_PERM_READ,
-					BT_GATT_CHRC_PROP_READ |
-					BT_GATT_CHRC_PROP_NOTIFY,
-					vocs_voaodec_read, NULL,
-					vocs);
+			&uuid,
+			BT_ATT_PERM_READ,
+			BT_GATT_CHRC_PROP_READ |
+			BT_GATT_CHRC_PROP_NOTIFY,
+			vocs_voaodec_read, NULL,
+			vocs);
 
 	vocs->voaodec_ccc = gatt_db_service_add_ccc(vocs->service,
-					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
+			BT_ATT_PERM_READ | BT_ATT_PERM_WRITE);
 
 	return vocs;
 }
@@ -1147,7 +1147,7 @@ void bt_vcp_add_db(struct gatt_db *db)
 }
 
 bool bt_vcp_set_debug(struct bt_vcp *vcp, bt_vcp_debug_func_t func,
-			void *user_data, bt_vcp_destroy_func_t destroy)
+		void *user_data, bt_vcp_destroy_func_t destroy)
 {
 	if (!vcp)
 		return false;
@@ -1163,7 +1163,7 @@ bool bt_vcp_set_debug(struct bt_vcp *vcp, bt_vcp_debug_func_t func,
 }
 
 unsigned int bt_vcp_register(bt_vcp_func_t attached, bt_vcp_func_t detached,
-							void *user_data)
+		void *user_data)
 {
 	struct bt_vcp_cb *cb;
 	static unsigned int id;
@@ -1237,8 +1237,8 @@ done:
 }
 
 static void vcp_vstate_notify(struct bt_vcp *vcp, uint16_t value_handle,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	struct vol_state vstate;
 
@@ -1250,8 +1250,8 @@ static void vcp_vstate_notify(struct bt_vcp *vcp, uint16_t value_handle,
 }
 
 static void vcp_voffset_state_notify(struct bt_vcp *vcp, uint16_t value_handle,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	struct vol_offset_state vostate;
 
@@ -1262,8 +1262,8 @@ static void vcp_voffset_state_notify(struct bt_vcp *vcp, uint16_t value_handle,
 }
 
 static void vcp_audio_loc_notify(struct bt_vcp *vcp, uint16_t value_handle,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	uint32_t *vocs_audio_loc_n = 0;
 
@@ -1274,8 +1274,8 @@ static void vcp_audio_loc_notify(struct bt_vcp *vcp, uint16_t value_handle,
 
 
 static void vcp_audio_descriptor_notify(struct bt_vcp *vcp, uint16_t value_handle,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	char vocs_audio_dec_n[256] = {'\0'};
 
@@ -1285,8 +1285,8 @@ static void vcp_audio_descriptor_notify(struct bt_vcp *vcp, uint16_t value_handl
 }
 
 static void vcp_vflag_notify(struct bt_vcp *vcp, uint16_t value_handle,
-			     const uint8_t *value, uint16_t length,
-			     void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	uint8_t vflag;
 
@@ -1296,8 +1296,8 @@ static void vcp_vflag_notify(struct bt_vcp *vcp, uint16_t value_handle,
 }
 
 static void read_vol_flag(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	uint8_t *vol_flag;
 	struct iovec iov = {
@@ -1320,8 +1320,8 @@ static void read_vol_flag(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
 }
 
 static void read_vol_state(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	struct vol_state *vs;
 	struct iovec iov = {
@@ -1346,8 +1346,8 @@ static void read_vol_state(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
 }
 
 static void read_vol_offset_state(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	struct vol_offset_state *vos;
 	struct iovec iov = {
@@ -1371,8 +1371,8 @@ static void read_vol_offset_state(struct bt_vcp *vcp, bool success, uint8_t att_
 }
 
 static void read_vocs_audio_location(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	uint32_t *vocs_audio_loc;
 	struct iovec iov = {
@@ -1396,8 +1396,8 @@ static void read_vocs_audio_location(struct bt_vcp *vcp, bool success, uint8_t a
 
 
 static void read_vocs_audio_descriptor(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	char *vocs_ao_dec_r;
 	struct iovec iov = {
@@ -1429,18 +1429,18 @@ static void vcp_pending_destroy(void *data)
 }
 
 static void vcp_pending_complete(bool success, uint8_t att_ecode,
-				const uint8_t *value, uint16_t length,
-				void *user_data)
+		const uint8_t *value, uint16_t length,
+		void *user_data)
 {
 	struct bt_vcp_pending *pending = user_data;
 
 	if (pending->func)
 		pending->func(pending->vcp, success, att_ecode, value, length,
-						pending->user_data);
+				pending->user_data);
 }
 
 static void vcp_read_value(struct bt_vcp *vcp, uint16_t value_handle,
-				vcp_func_t func, void *user_data)
+		vcp_func_t func, void *user_data)
 {
 	struct bt_vcp_pending *pending;
 
@@ -1450,8 +1450,8 @@ static void vcp_read_value(struct bt_vcp *vcp, uint16_t value_handle,
 	pending->user_data = user_data;
 
 	pending->id = bt_gatt_client_read_value(vcp->client, value_handle,
-						vcp_pending_complete, pending,
-						vcp_pending_destroy);
+			vcp_pending_complete, pending,
+			vcp_pending_destroy);
 	if (!pending->id) {
 		DBG(vcp, "Unable to send Read request");
 		free(pending);
@@ -1470,13 +1470,13 @@ static void vcp_register(uint16_t att_ecode, void *user_data)
 }
 
 static void vcp_notify(uint16_t value_handle, const uint8_t *value,
-				uint16_t length, void *user_data)
+		uint16_t length, void *user_data)
 {
 	struct bt_vcp_notify *notify = user_data;
 
 	if (notify->func)
 		notify->func(notify->vcp, value_handle, value, length,
-						notify->user_data);
+				notify->user_data);
 }
 
 static void vcp_notify_destroy(void *data)
@@ -1489,9 +1489,9 @@ static void vcp_notify_destroy(void *data)
 }
 
 static unsigned int vcp_register_notify(struct bt_vcp *vcp,
-					uint16_t value_handle,
-					vcp_notify_t func,
-					void *user_data)
+		uint16_t value_handle,
+		vcp_notify_t func,
+		void *user_data)
 {
 	struct bt_vcp_notify *notify;
 
@@ -1501,9 +1501,9 @@ static unsigned int vcp_register_notify(struct bt_vcp *vcp,
 	notify->user_data = user_data;
 
 	notify->id = bt_gatt_client_register_notify(vcp->client,
-						value_handle, vcp_register,
-						vcp_notify, notify,
-						vcp_notify_destroy);
+			value_handle, vcp_register,
+			vcp_notify, notify,
+			vcp_notify_destroy);
 	if (!notify->id) {
 		DBG(vcp, "Unable to register for notifications");
 		free(notify);
@@ -1523,7 +1523,7 @@ static void foreach_vcs_char(struct gatt_db_attribute *attr, void *user_data)
 	struct bt_vcs *vcs;
 
 	if (!gatt_db_attribute_get_char_data(attr, NULL, &value_handle,
-						NULL, NULL, &uuid))
+				NULL, NULL, &uuid))
 		return;
 
 	bt_uuid16_create(&uuid_vstate, VOL_STATE_CHRC_UUID);
@@ -1542,7 +1542,7 @@ static void foreach_vcs_char(struct gatt_db_attribute *attr, void *user_data)
 		vcp_read_value(vcp, value_handle, read_vol_state, vcp);
 
 		vcp->vstate_id = vcp_register_notify(vcp, value_handle,
-						     vcp_vstate_notify, NULL);
+				vcp_vstate_notify, NULL);
 
 		return;
 	}
@@ -1570,7 +1570,7 @@ static void foreach_vcs_char(struct gatt_db_attribute *attr, void *user_data)
 
 		vcp_read_value(vcp, value_handle, read_vol_flag, vcp);
 		vcp->vflag_id = vcp_register_notify(vcp, value_handle,
-						    vcp_vflag_notify, NULL);
+				vcp_vflag_notify, NULL);
 
 	}
 }
@@ -1583,7 +1583,7 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 	struct bt_vocs *vocs;
 
 	if (!gatt_db_attribute_get_char_data(attr, NULL, &value_handle,
-						NULL, NULL, &uuid))
+				NULL, NULL, &uuid))
 		return;
 
 	bt_uuid16_create(&uuid_vostate, VOL_OFFSET_STATE_CHAR_UUID);
@@ -1603,7 +1603,7 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 		vcp_read_value(vcp, value_handle, read_vol_offset_state, vcp);
 
 		vcp->vostate_id = vcp_register_notify(vcp, value_handle,
-						     vcp_voffset_state_notify, NULL);
+				vcp_voffset_state_notify, NULL);
 
 		return;
 	}
@@ -1620,7 +1620,7 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 		vcp_read_value(vcp, value_handle, read_vocs_audio_location, vcp);
 
 		vcp->vocs_audio_loc_id = vcp_register_notify(vcp, value_handle,
-						     vcp_audio_loc_notify, NULL);
+				vcp_audio_loc_notify, NULL);
 
 		return;
 	}
@@ -1648,14 +1648,14 @@ static void foreach_vocs_char(struct gatt_db_attribute *attr, void *user_data)
 
 		vcp_read_value(vcp, value_handle, read_vocs_audio_descriptor, vcp);
 		vcp->vocs_ao_dec_id = vcp_register_notify(vcp, value_handle,
-						    vcp_audio_descriptor_notify, NULL);
+				vcp_audio_descriptor_notify, NULL);
 
 	}
 
 }
 
 static void foreach_vcs_service(struct gatt_db_attribute *attr,
-						void *user_data)
+		void *user_data)
 {
 	struct bt_vcp *vcp = user_data;
 	struct bt_vcs *vcs = vcp_get_vcs(vcp);
@@ -1668,7 +1668,7 @@ static void foreach_vcs_service(struct gatt_db_attribute *attr,
 }
 
 static void foreach_vocs_service(struct gatt_db_attribute *attr,
-						void *user_data)
+		void *user_data)
 {
 	struct bt_vcp *vcp = user_data;
 	struct bt_vocs *vocs = vcp_get_vocs(vcp);
