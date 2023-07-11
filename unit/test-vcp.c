@@ -36,13 +36,39 @@ struct test_data {
 	struct bt_vcp  *bt_vcp;
 	struct bt_gatt_server *server;
 	struct queue *ccc_states;
+	struct queue *device_states;
+	struct queue *ccc_callbacks;
 	size_t iovcnt;
 	struct iovec *iov;
 };
 
+struct pending_op {
+	struct bt_att *att;
+	unsigned int id;
+	unsigned int disconn_id;
+	uint16_t offset;
+	uint8_t link_type;
+	struct gatt_db_attribute *attrib;
+	struct queue *owner_queue;
+	struct iovec data;
+	bool is_characteristic;
+	bool prep_authorize;
+};
+
+typedef uint8_t (*btd_gatt_database_ccc_write_t) (struct pending_op *op,
+							void *user_data);
+typedef void (*btd_gatt_database_destroy_t) (void *data);
+
 struct ccc_state {
 	uint16_t handle;
 	uint16_t value;
+};
+
+struct ccc_cb_data {
+	uint16_t handle;
+	btd_gatt_database_ccc_write_t callback;
+	btd_gatt_database_destroy_t destroy;
+	void *user_data;
 };
 
 /* ATT: Exchange MTU Request (0x02) len 2
@@ -239,6 +265,18 @@ struct ccc_state {
 	IOV_DATA(0x10, 0x0d, 0x00, 0xff, 0xff, 0x01, 0x28), \
 	IOV_DATA(0x01, 0x10, 0x0d, 0x00, 0x0a)
 
+#define VOCS_CP_INVALID_COUNTER_CHANGE \
+	IOV_DATA(0x12, 0x09, 0x00, 0x01, 0x0a, 0x0a, 0x00), \
+	IOV_DATA(0x01, 0x12, 0x09, 0x00, 0x80)
+
+#define VOCS_CP_OPCODE_NOT_SUPPORTED \
+	IOV_DATA(0x12, 0x09, 0x00, 0x02, 0x00, 0x01, 0x00), \
+	IOV_DATA(0x01, 0x12, 0x09, 0x00, 0x81)
+
+#define VOCS_CP_VALUE_OOR \
+	IOV_DATA(0x12, 0x09, 0x00, 0x01, 0x00, 0x0e, 0x01), \
+	IOV_DATA(0x01, 0x12, 0x09, 0x00, 0x82)
+
 #define DISC_VOCS_OFFSET_STATE_CHAR \
 	EXCHANGE_MTU,\
 	VOCS_SERVICE_READ, \
@@ -262,6 +300,16 @@ struct ccc_state {
 	VOCS_SERVICE_READ, \
 	VOCS_FIND_BY_TYPE_VALUE, \
 	DISC_AUD_OP_DESC_CHAR
+
+#define WRITE_VOCS_INVALID_COUNTER_CHANGE \
+	VOCS_CP_INVALID_COUNTER_CHANGE
+
+#define WRITE_VOCS_OPCODE_NOT_SUPPORTED \
+	VOCS_CP_OPCODE_NOT_SUPPORTED
+
+#define WRITE_VOCS_VALUE_OOR \
+	VOCS_CP_VALUE_OOR
+
 
 /*#define DISC_VOCS_AUDIO_LOC_SER \
 	EXCHANGE_MTU,\
@@ -328,6 +376,7 @@ static struct ccc_state *find_ccc_state(struct test_data *data,
 				UINT_TO_PTR(handle));
 }
 
+
 static struct ccc_state *get_ccc_state(struct test_data *data, uint16_t handle)
 {
 	struct ccc_state *ccc;
@@ -342,6 +391,29 @@ static struct ccc_state *get_ccc_state(struct test_data *data, uint16_t handle)
 
 	return ccc;
 }
+
+#if UNIT_WRITE
+static struct ccc_state *get_ccc_state(struct test_data *database,
+					struct bt_att *att, uint16_t handle)
+{
+	struct device_state *dev_state;
+	struct ccc_state *ccc;
+
+	dev_state = get_device_state(database, att);
+	if (!dev_state)
+		return NULL;
+
+	ccc = find_ccc_state(dev_state, handle);
+	if (ccc)
+		return ccc;
+
+	ccc = new0(struct ccc_state, 1);
+	ccc->handle = handle;
+	queue_push_tail(dev_state->ccc_states, ccc);
+
+	return ccc;
+}
+#endif
 
 static void gatt_ccc_read_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
@@ -369,6 +441,82 @@ static void gatt_ccc_read_cb(struct gatt_db_attribute *attrib,
 done:
 	gatt_db_attribute_read_result(attrib, id, ecode, value, len);
 }
+
+#if UNIT_WRITE
+static bool ccc_cb_match_handle(const void *data, const void *match_data)
+{
+	const struct ccc_cb_data *ccc_cb = data;
+	uint16_t handle = PTR_TO_UINT(match_data);
+
+	return ccc_cb->handle == handle;
+}
+
+
+static void gatt_ccc_write_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					const uint8_t *value, size_t len,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data)
+{
+	struct test_data *database = user_data;
+	struct ccc_state *ccc;
+	struct ccc_cb_data *ccc_cb;
+	uint16_t handle, val;
+	uint8_t ecode = 0;
+
+	handle = gatt_db_attribute_get_handle(attrib);
+
+	//DBG("CCC write called for handle: 0x%04x", handle);
+
+	if (!value || len > 2) {
+		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+		goto done;
+	}
+
+	if (offset > 2) {
+		ecode = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	ccc = get_ccc_state(database, handle);
+	if (!ccc) {
+		ecode = BT_ATT_ERROR_UNLIKELY;
+		goto done;
+	}
+
+	if (len == 1)
+		val = *value;
+	else
+		val = get_le16(value);
+
+	/* If value is identical, then just succeed */
+	if (val == ccc->value)
+		goto done;
+
+	ccc_cb = queue_find(database->ccc_callbacks, ccc_cb_match_handle,
+			UINT_TO_PTR(gatt_db_attribute_get_handle(attrib)));
+	if (ccc_cb) {
+		struct pending_op *op;
+
+		op = pending_ccc_new(att, attrib, val,
+					bt_att_get_link_type(att));
+		if (!op) {
+			ecode = BT_ATT_ERROR_UNLIKELY;
+			goto done;
+		}
+
+		ecode = ccc_cb->callback(op, ccc_cb->SS);
+		if (ecode)
+			pending_op_free(op);
+	}
+
+	if (!ecode)
+		ccc->value = val;
+
+done:
+	gatt_db_attribute_write_result(attrib, id, ecode);
+}
+#endif
 
 static void test_server(const void *user_data)
 {
@@ -410,7 +558,6 @@ static void test_server(const void *user_data)
 
 static void test_sggit(void)
 {
-
 	define_test("VOCS/SR/SGGIT/CHA/BV-01-C", test_server, NULL,
 							DISC_VOCS_OFFSET_STATE_CHAR);
 
@@ -423,6 +570,14 @@ static void test_sggit(void)
 	define_test("VOCS/SR/SGGIT/CHA/BV-04-C", test_server, NULL,
 							DISC_VOCS_AUD_OP_DESC_CHAR);
 
+	define_test("VOCS/SR/SGGIT/CP/BI-01-C", test_server, NULL,
+							WRITE_VOCS_INVALID_COUNTER_CHANGE);
+
+	define_test("VOCS/SR/SGGIT/CP/BI-02-C", test_server, NULL,
+							WRITE_VOCS_OPCODE_NOT_SUPPORTED);
+
+	define_test("VOCS/SR/SGGIT/CP/BI-03-C", test_server, NULL,
+							WRITE_VOCS_VALUE_OOR);
 }
 
 int main(int argc, char *argv[])
