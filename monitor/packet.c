@@ -3087,6 +3087,10 @@ static const struct bitfield_data events_le_table[] = {
 	{ 17, "LE Extended Advertising Set Terminated"	},
 	{ 18, "LE Scan Request Received"		},
 	{ 19, "LE Channel Selection Algorithm"		},
+	{ 20, "LE Connectionless IQ Report"		},
+	{ 21, "LE Connection IQ Report"			},
+	{ 22, "LE CTE Request Failed"			},
+	{ 23, "LE Periodic Advertising Sync Transfer Rvc"},
 	{ 24, "LE CIS Established"			},
 	{ 25, "LE CIS Request"				},
 	{ 26, "LE Create BIG Complete"			},
@@ -3993,6 +3997,18 @@ static void print_eir(const uint8_t *eir, uint8_t eir_len, bool le)
 			print_service_data(data, data_len);
 			break;
 
+		case BT_EIR_SERVICE_DATA128:
+			if (data_len <= 16)
+				break;
+
+			print_field("Service Data UUID 128: %s ",
+						bt_uuid128_to_str(&data[0]));
+
+			if (data_len > 16)
+				print_hex_field("  Data", &data[16],
+								data_len - 16);
+
+			break;
 		case BT_EIR_RANDOM_ADDRESS:
 			if (data_len < 6)
 				break;
@@ -8811,7 +8827,7 @@ static void le_create_big_cmd_test_cmd(uint16_t index, const void *data,
 {
 	const struct bt_hci_cmd_le_create_big_test *cmd = data;
 
-	print_field("BIG ID: 0x%2.2x", cmd->big_id);
+	print_field("BIG Handle: 0x%2.2x", cmd->big_handle);
 	print_field("Advertising Handle: 0x%2.2x", cmd->adv_handle);
 	print_field("Number of BIS: %u", cmd->num_bis);
 
@@ -8940,6 +8956,37 @@ static void le_set_host_feature_cmd(uint16_t index, const void *data,
 						"(0x%16.16" PRIx64 ")", mask);
 
 	print_field("Bit Value: %u", cmd->bit_value);
+}
+
+static void le_read_iso_link_quality_cmd(uint16_t index, const void *data,
+							uint8_t size)
+{
+	const struct bt_hci_cmd_le_read_iso_link_quality *cmd = data;
+
+	print_field("Handle: %d", le16_to_cpu(cmd->handle));
+}
+
+static void status_le_read_iso_link_quality_rsp(uint16_t index,
+							const void *data,
+							uint8_t size)
+{
+	const struct bt_hci_rsp_le_read_iso_link_quality *rsp = data;
+
+	print_status(rsp->status);
+
+	if (size == 1)
+		return;
+
+	print_field("Handle: %d", le16_to_cpu(rsp->handle));
+	print_field("TX unacked packets %d", rsp->tx_unacked_packets);
+	print_field("TX flushed packets %d", rsp->tx_flushed_packets);
+	print_field("TX last subevent packets %d",
+					rsp->tx_last_subevent_packets);
+	print_field("TX retransmitted packets %d",
+						rsp->retransmitted_packets);
+	print_field("TX crc error packets %d", rsp->crc_error_packets);
+	print_field("RX unreceived packets %d", rsp->rx_unreceived_packets);
+	print_field("Duplicated packets %d", rsp->duplicated_packets);
 }
 
 struct opcode_data {
@@ -9871,7 +9918,9 @@ static const struct opcode_data opcode_table[] = {
 				"LE Remove Isochronous Data Path",
 				le_remove_iso_path_cmd,
 				sizeof(struct bt_hci_cmd_le_remove_iso_path),
-				true, status_rsp, 1, true },
+				true, status_handle_rsp,
+				sizeof(struct bt_hci_rsp_le_remove_iso_path),
+				true },
 	{ BT_HCI_CMD_LE_ISO_TX_TEST, BT_HCI_BIT_LE_ISO_TX_TEST,
 				"LE Isochronous Transmit Test", NULL, 0,
 				false },
@@ -9889,6 +9938,16 @@ static const struct opcode_data opcode_table[] = {
 				"LE Set Host Feature", le_set_host_feature_cmd,
 				sizeof(struct bt_hci_cmd_le_set_host_feature),
 				true, status_rsp, 1, true },
+	{ BT_HCI_CMD_LE_READ_ISO_LINK_QUALITY,
+				BT_HCI_BIT_LE_READ_ISO_LINK_QUALITY,
+				"LE Read ISO link quality",
+				le_read_iso_link_quality_cmd,
+				sizeof(
+				struct bt_hci_cmd_le_read_iso_link_quality),
+				true, status_le_read_iso_link_quality_rsp,
+				sizeof(
+				struct bt_hci_rsp_le_read_iso_link_quality),
+				true },
 	{ }
 };
 
@@ -10336,35 +10395,21 @@ static void role_change_evt(struct timeval *tv, uint16_t index,
 	print_role(evt->role);
 }
 
-#define TV_MSEC(_tv) (long long)(_tv.tv_sec * 1000 + _tv.tv_usec / 1000)
-
-static void packet_dequeue_tx(struct timeval *tv, uint16_t handle)
+void packet_latency_add(struct packet_latency *latency, struct timeval *delta)
 {
-	struct packet_conn_data *conn;
-	struct timeval *tx;
-	struct timeval delta;
+	timeradd(&latency->total, delta, &latency->total);
 
-	conn = packet_get_conn_data(handle);
-	if (!conn)
-		return;
+	if ((!timerisset(&latency->min) || timercmp(delta, &latency->min, <))
+				&& delta->tv_sec >= 0 && delta->tv_usec >= 0)
+		latency->min = *delta;
 
-	tx = queue_pop_head(conn->tx_q);
-	if (!tx)
-		return;
+	if (!timerisset(&latency->max) || timercmp(delta, &latency->max, >))
+		latency->max = *delta;
 
-	timersub(tv, tx, &delta);
-
-	if ((!timerisset(&conn->tx_min) || timercmp(&delta, &conn->tx_min, <))
-				&& delta.tv_sec >= 0 && delta.tv_usec >= 0)
-		conn->tx_min = delta;
-
-	if (!timerisset(&conn->tx_max) || timercmp(&delta, &conn->tx_max, >))
-		conn->tx_max = delta;
-
-	if (timerisset(&conn->tx_med)) {
+	if (timerisset(&latency->med)) {
 		struct timeval tmp;
 
-		timeradd(&conn->tx_med, &delta, &tmp);
+		timeradd(&latency->med, delta, &tmp);
 
 		tmp.tv_sec /= 2;
 		tmp.tv_usec /= 2;
@@ -10376,17 +10421,38 @@ static void packet_dequeue_tx(struct timeval *tv, uint16_t handle)
 			}
 		}
 
-		conn->tx_med = tmp;
+		latency->med = tmp;
 	} else
-		conn->tx_med = delta;
+		latency->med = *delta;
+}
 
+static void packet_dequeue_tx(struct timeval *tv, uint16_t handle)
+{
+	struct packet_conn_data *conn;
+	struct packet_frame *frame;
+	struct timeval delta;
+
+	conn = packet_get_conn_data(handle);
+	if (!conn)
+		return;
+
+	frame = queue_pop_head(conn->tx_q);
+	if (!frame)
+		return;
+
+	timersub(tv, &frame->tv, &delta);
+
+	packet_latency_add(&conn->tx_l, &delta);
+
+	print_field("#%zu: len %zu (%lld Kb/s)", frame->num, frame->len,
+					frame->len * 8 / TV_MSEC(delta));
 	print_field("Latency: %lld msec (%lld-%lld msec ~%lld msec)",
-			TV_MSEC(delta), TV_MSEC(conn->tx_min),
-			TV_MSEC(conn->tx_max), TV_MSEC(conn->tx_med));
+			TV_MSEC(delta), TV_MSEC(conn->tx_l.min),
+			TV_MSEC(conn->tx_l.max), TV_MSEC(conn->tx_l.med));
 
 	l2cap_dequeue_frame(&delta, conn);
 
-	free(tx);
+	free(frame);
 }
 
 static void num_completed_packets_evt(struct timeval *tv, uint16_t index,
@@ -10403,6 +10469,7 @@ static void num_completed_packets_evt(struct timeval *tv, uint16_t index,
 	for (i = 0; i < evt->num_handles; i++) {
 		uint16_t handle;
 		uint16_t count;
+		int j;
 
 		if (!util_iov_pull_le16(&iov, &handle))
 			break;
@@ -10412,9 +10479,10 @@ static void num_completed_packets_evt(struct timeval *tv, uint16_t index,
 		if (!util_iov_pull_le16(&iov, &count))
 			break;
 
-		print_field("Count: %d", le16_to_cpu(evt->count));
+		print_field("Count: %d", count);
 
-		packet_dequeue_tx(tv, handle);
+		for (j = 0; j < count; j++)
+			packet_dequeue_tx(tv, handle);
 	}
 
 	if (iov.iov_len)
@@ -10602,6 +10670,10 @@ static void sync_conn_complete_evt(struct timeval *tv, uint16_t index,
 	print_field("RX packet length: %d", le16_to_cpu(evt->rx_pkt_len));
 	print_field("TX packet length: %d", le16_to_cpu(evt->tx_pkt_len));
 	print_air_mode(evt->air_mode);
+
+	if (evt->status == 0x00)
+		assign_handle(index, le16_to_cpu(evt->handle), evt->link_type,
+					(void *)evt->bdaddr, BDADDR_BREDR);
 }
 
 static void sync_conn_changed_evt(struct timeval *tv, uint16_t index,
@@ -11561,6 +11633,10 @@ static void le_cis_established_evt(struct timeval *tv, uint16_t index,
 	print_field("Central to Peripheral MTU: %u", le16_to_cpu(evt->c_mtu));
 	print_field("Peripheral to Central MTU: %u", le16_to_cpu(evt->p_mtu));
 	print_slot_125("ISO Interval", evt->interval);
+
+	if (!evt->status)
+		assign_handle(index, le16_to_cpu(evt->conn_handle), 0x05,
+					NULL, BDADDR_LE_PUBLIC);
 }
 
 static void le_req_cis_evt(struct timeval *tv, uint16_t index,
@@ -11593,12 +11669,20 @@ static void le_big_complete_evt(struct timeval *tv, uint16_t index,
 	print_le_phy("PHY", evt->phy);
 	print_field("NSE: %u", evt->nse);
 	print_field("BN: %u", evt->bn);
-	print_field("PTO: %u", evt->bn);
+	print_field("PTO: %u", evt->pto);
 	print_field("IRC: %u", evt->irc);
 	print_field("Maximum PDU: %u", evt->max_pdu);
 	print_slot_125("ISO Interval", evt->interval);
 	print_list(evt->bis_handle, size, evt->num_bis,
 				sizeof(*evt->bis_handle), print_bis_handle);
+
+	if (!evt->status) {
+		int i;
+
+		for (i = 0; i < evt->num_bis; i++)
+			assign_handle(index, le16_to_cpu(evt->bis_handle[i]),
+					0x05, NULL, BDADDR_LE_PUBLIC);
+	}
 }
 
 static void le_big_terminate_evt(struct timeval *tv, uint16_t index,
@@ -11626,6 +11710,14 @@ static void le_big_sync_estabilished_evt(struct timeval *tv, uint16_t index,
 	print_slot_125("ISO Interval", evt->interval);
 	print_list(evt->bis, size, evt->num_bis, sizeof(*evt->bis),
 						print_bis_handle);
+
+	if (!evt->status) {
+		int i;
+
+		for (i = 0; i < evt->num_bis; i++)
+			assign_handle(index, le16_to_cpu(evt->bis[i]),
+					0x05, NULL, BDADDR_LE_PUBLIC);
+	}
 }
 
 static void le_big_sync_lost_evt(struct timeval *tv, uint16_t index,
@@ -11633,7 +11725,7 @@ static void le_big_sync_lost_evt(struct timeval *tv, uint16_t index,
 {
 	const struct bt_hci_evt_le_big_sync_lost *evt = data;
 
-	print_field("BIG ID: 0x%2.2x", evt->big_id);
+	print_field("BIG Handle: 0x%2.2x", evt->big_handle);
 	print_reason(evt->reason);
 }
 
@@ -12354,10 +12446,11 @@ void packet_hci_event(struct timeval *tv, struct ucred *cred, uint16_t index,
 	event_data->func(tv, index, data, hdr->plen);
 }
 
-static void packet_queue_tx(struct timeval *tv, uint16_t handle)
+static void packet_enqueue_tx(struct timeval *tv, uint16_t handle,
+				size_t num, uint16_t len)
 {
 	struct packet_conn_data *conn;
-	struct timeval *tx;
+	struct packet_frame *frame;
 
 	conn = packet_get_conn_data(handle);
 	if (!conn)
@@ -12366,9 +12459,12 @@ static void packet_queue_tx(struct timeval *tv, uint16_t handle)
 	if (!conn->tx_q)
 		conn->tx_q = queue_new();
 
-	tx = new0(struct timeval, 1);
-	memcpy(tx, tv, sizeof(*tv));
-	queue_push_tail(conn->tx_q, tx);
+	frame = new0(struct packet_frame, 1);
+	if (tv)
+		memcpy(&frame->tv, tv, sizeof(*tv));
+	frame->num = num;
+	frame->len = len;
+	queue_push_tail(conn->tx_q, frame);
 }
 
 void packet_hci_acldata(struct timeval *tv, struct ucred *cred, uint16_t index,
@@ -12409,7 +12505,8 @@ void packet_hci_acldata(struct timeval *tv, struct ucred *cred, uint16_t index,
 						handle_str, extra_str);
 
 	if (!in)
-		packet_queue_tx(tv, acl_handle(handle));
+		packet_enqueue_tx(tv, acl_handle(handle),
+					index_list[index].frame, dlen);
 
 	if (size != dlen) {
 		print_text(COLOR_ERROR, "invalid packet size (%d != %d)",
@@ -12461,7 +12558,8 @@ void packet_hci_scodata(struct timeval *tv, struct ucred *cred, uint16_t index,
 						handle_str, extra_str);
 
 	if (!in)
-		packet_queue_tx(tv, acl_handle(handle));
+		packet_enqueue_tx(tv, acl_handle(handle),
+					index_list[index].frame, hdr->dlen);
 
 	if (size != hdr->dlen) {
 		print_text(COLOR_ERROR, "invalid packet size (%d != %d)",
@@ -12511,7 +12609,8 @@ void packet_hci_isodata(struct timeval *tv, struct ucred *cred, uint16_t index,
 						handle_str, extra_str);
 
 	if (!in)
-		packet_queue_tx(tv, acl_handle(handle));
+		packet_enqueue_tx(tv, acl_handle(handle),
+					index_list[index].frame, hdr->dlen);
 
 	if (size != hdr->dlen) {
 		print_text(COLOR_ERROR, "invalid packet size (%d != %d)",

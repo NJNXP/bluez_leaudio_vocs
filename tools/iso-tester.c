@@ -95,6 +95,10 @@
 	QOS_FULL(0x01, 0x02, \
 		{}, QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
 
+#define QOS_OUT_1_EF(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x01, 0xEF, \
+		{}, QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
 #define QOS_IN(_interval, _latency, _sdu, _phy, _rtn) \
 	QOS_FULL(BT_ISO_QOS_CIG_UNSET, BT_ISO_QOS_CIS_UNSET, \
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), {})
@@ -172,6 +176,7 @@
  */
 #define AC_6ii_1 QOS_OUT_1(10000, 10, 40, 0x02, 2)
 #define AC_6ii_2 QOS_OUT_1(10000, 10, 40, 0x02, 2)
+#define AC_6ii_1_EF QOS_OUT_1_EF(10000, 10, 40, 0x02, 2)  /* different CIS ID */
 /* Two unidirectional CISes. Unicast Server is Audio Sink and Audio Source.
  * #1 - CIG 1 CIS 1 (input)
  * #2 - CIG 1 CIS 2 (output)
@@ -801,6 +806,16 @@ static const struct iso_client_data connect_reject = {
 	.expect_err = -ENOSYS
 };
 
+static const struct iso_client_data connect_cig_f0_invalid = {
+	.qos = QOS_FULL(0xF0, 0x00, {}, QOS_IO(10000, 10, 40, 0x02, 2)),
+	.expect_err = -EINVAL
+};
+
+static const struct iso_client_data connect_cis_f0_invalid = {
+	.qos = QOS_FULL(0x00, 0xF0, {}, QOS_IO(10000, 10, 40, 0x02, 2)),
+	.expect_err = -EINVAL
+};
+
 static const uint8_t data_16_2_1[40] = { [0 ... 39] = 0xff };
 static const struct iovec send_16_2_1 = {
 	.iov_base = (void *)data_16_2_1,
@@ -958,6 +973,22 @@ static const struct iso_client_data reconnect_ac_6ii = {
 	.mconn = true,
 	.defer = true,
 	.disconnect = true,
+};
+
+static const struct iso_client_data connect_ac_6ii_cis_ef_auto = {
+	.qos = AC_6ii_1_EF,
+	.qos_2 = AC_6ii_2,
+	.expect_err = 0,
+	.mconn = true,
+	.defer = true,
+};
+
+static const struct iso_client_data connect_ac_6ii_cis_ef_ef = {
+	.qos = AC_6ii_1_EF,
+	.qos_2 = AC_6ii_1_EF,
+	.expect_err = -EINVAL,
+	.mconn = true,
+	.defer = true,
 };
 
 static const struct iso_client_data connect_ac_7i = {
@@ -2371,6 +2402,171 @@ static void test_connect2_seq(const void *test_data)
 	setup_connect(data, 0, iso_connect2_seq_cb);
 }
 
+static gboolean test_connect2_busy_done(gpointer user_data)
+{
+	struct test_data *data = tester_get_data();
+
+	if (data->io_id[0] > 0) {
+		/* First connection still exists */
+		g_source_remove(data->io_id[0]);
+		data->io_id[0] = 0;
+		tester_test_passed();
+	} else {
+		tester_test_failed();
+	}
+
+	return FALSE;
+}
+
+static gboolean iso_connect_cb_busy_disc(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = tester_get_data();
+
+	data->io_id[0] = 0;
+
+	tester_print("Disconnected 1");
+	tester_test_failed();
+	return FALSE;
+}
+
+static gboolean iso_connect_cb_busy_2(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = tester_get_data();
+	int err, sk_err, sk;
+	socklen_t len;
+
+	data->io_id[1] = 0;
+
+	sk = g_io_channel_unix_get_fd(io);
+
+	len = sizeof(sk_err);
+
+	if (getsockopt(sk, SOL_SOCKET, SO_ERROR, &sk_err, &len) < 0)
+		err = -errno;
+	else
+		err = -sk_err;
+
+	tester_print("Connected 2: %d", err);
+
+	if (err == -EBUSY && data->io_id[0] > 0) {
+		/* Wait in case first connection still gets disconnected */
+		data->io_id[1] = g_timeout_add(250, test_connect2_busy_done,
+									data);
+	} else {
+		tester_test_failed();
+	}
+
+	return FALSE;
+}
+
+static gboolean iso_connect_cb_busy(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = tester_get_data();
+
+	/* First connection shall not be disconnected */
+	data->io_id[0] = g_io_add_watch(io, G_IO_ERR | G_IO_HUP,
+						iso_connect_cb_busy_disc, data);
+
+	/* Second connect shall fail since CIG is now busy */
+	setup_connect(data, 1, iso_connect_cb_busy_2);
+
+	return iso_connect(io, cond, user_data);
+}
+
+static void test_connect2_busy(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+
+	setup_connect(data, 0, iso_connect_cb_busy);
+}
+
+static gboolean iso_connect_close_cb(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = user_data;
+
+	data->io_id[0] = 0;
+
+	tester_print("Disconnected");
+
+	--data->step;
+	if (!data->step)
+		tester_test_passed();
+
+	return FALSE;
+}
+
+static bool hook_remove_cig(const void *msg, uint16_t len, void *user_data)
+{
+	struct test_data *data = user_data;
+
+	tester_print("Remove CIG");
+
+	--data->step;
+	if (!data->step)
+		tester_test_passed();
+
+	return true;
+}
+
+static void test_connect_close(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	int sk;
+	GIOChannel *io;
+
+	data->step = 2;
+
+	hciemu_add_hook(data->hciemu, HCIEMU_HOOK_PRE_CMD,
+					BT_HCI_CMD_LE_REMOVE_CIG,
+					hook_remove_cig, data);
+
+	sk = setup_sock(data, 0);
+	if (sk < 0)
+		return;
+
+	io = g_io_channel_unix_new(sk);
+	g_io_channel_set_close_on_unref(io, TRUE);
+	data->io_id[0] = g_io_add_watch(io, G_IO_HUP, iso_connect_close_cb,
+									data);
+
+	shutdown(sk, SHUT_RDWR);
+}
+
+static gboolean iso_connect_wait_close_cb(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = tester_get_data();
+	int sk;
+
+	tester_print("Connected");
+
+	sk = g_io_channel_unix_get_fd(io);
+
+	data->io_id[0] = g_io_add_watch(io, G_IO_HUP, iso_connect_close_cb,
+									data);
+
+	shutdown(sk, SHUT_RDWR);
+
+	return FALSE;
+}
+
+static void test_connect_wait_close(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+
+	data->step = 1;
+
+	hciemu_add_hook(data->hciemu, HCIEMU_HOOK_PRE_CMD,
+					BT_HCI_CMD_LE_REMOVE_CIG,
+					hook_remove_cig, data);
+
+	setup_connect(data, 0, iso_connect_wait_close_cb);
+}
+
 static void test_bcast(const void *test_data)
 {
 	struct test_data *data = tester_get_data();
@@ -2518,6 +2714,12 @@ int main(int argc, char *argv[])
 	test_iso("ISO QoS - Invalid", &connect_invalid, setup_powered,
 							test_connect);
 
+	test_iso("ISO QoS CIG 0xF0 - Invalid", &connect_cig_f0_invalid,
+			setup_powered, test_connect);
+
+	test_iso("ISO QoS CIS 0xF0 - Invalid", &connect_cis_f0_invalid,
+			setup_powered, test_connect);
+
 	test_iso_rej("ISO Connect - Reject", &connect_reject, setup_powered,
 			test_connect, BT_HCI_ERR_CONN_FAILED_TO_ESTABLISH);
 
@@ -2540,6 +2742,26 @@ int main(int argc, char *argv[])
 
 	test_iso("ISO Defer Connect - Success", &defer_16_2_1, setup_powered,
 							test_connect);
+
+	test_iso("ISO Defer Close - Success", &defer_16_2_1, setup_powered,
+							test_connect_close);
+
+	test_iso("ISO Connect Close - Success", &connect_16_2_1, setup_powered,
+							test_connect_close);
+
+	test_iso("ISO Defer Wait Close - Success", &defer_16_2_1,
+					setup_powered, test_connect_wait_close);
+
+	test_iso("ISO Connect Wait Close - Success", &connect_16_2_1,
+					setup_powered, test_connect_wait_close);
+
+	test_iso2("ISO Connect2 CIG 0x01 - Success", &connect_1_16_2_1,
+							setup_powered,
+							test_connect2);
+
+	test_iso2("ISO Connect2 Busy CIG 0x01 - Success/Invalid",
+					&connect_1_16_2_1, setup_powered,
+					test_connect2_busy);
 
 	test_iso2("ISO Defer Connect2 CIG 0x01 - Success", &defer_1_16_2_1,
 							setup_powered,
@@ -2629,6 +2851,14 @@ int main(int argc, char *argv[])
 	test_iso2("ISO Reconnect AC 6(ii) - Success", &reconnect_ac_6ii,
 							setup_powered,
 							test_reconnect);
+
+	test_iso2("ISO AC 6(ii) CIS 0xEF/auto - Success",
+						&connect_ac_6ii_cis_ef_auto,
+						setup_powered, test_connect);
+
+	test_iso2("ISO AC 6(ii) CIS 0xEF/0xEF - Invalid",
+						&connect_ac_6ii_cis_ef_ef,
+						setup_powered, test_connect);
 
 	test_iso("ISO Broadcaster - Success", &bcast_16_2_1_send, setup_powered,
 							test_bcast);
